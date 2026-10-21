@@ -6,11 +6,25 @@ export async function ensureIndexes(): Promise<void> {
   const db = await getDb();
 
   await Promise.all([
+    db.collection("safety_events").createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: "string" } } }),
+    db.collection("safety_events").createIndex({ notificationsQueued: 1, createdAt: 1 }),
+    db.collection("safety_events").createIndex({ status: 1, residentId: 1 }),
+    db.collection("monitoring_sessions").createIndex({ id: 1 }, { unique: true }),
+    db.collection("monitoring_sessions").createIndex({ residentId: 1, startedAt: -1 }),
+    db.collection("monitoring_sessions").createIndex({ status: 1, lastSeenAt: 1 }),
+    db.collection("notifications").createIndex({ id: 1 }, { unique: true }),
+    db.collection("notifications").createIndex({ status: 1, nextAttemptAt: 1 }),
+    db.collection("notifications").createIndex({ eventId: 1, residentId: 1 }),
+    db.collection("staff").createIndex({ id: 1 }, { unique: true }),
+    db.collection("application_settings").createIndex({ id: 1 }, { unique: true }),
+    db.collection("upload_intents").createIndex({ id: 1 }, { unique: true }),
+    db.collection("upload_intents").createIndex({ eventId: 1 }, { unique: true }),
     // safety_events: sorted lookups by resident and by severity
     db.collection("safety_events").createIndex({ residentId: 1, createdAt: -1 }),
     db.collection("safety_events").createIndex({ severity: 1, createdAt: -1 }),
     db.collection("safety_events").createIndex({ createdAt: -1 }),
 
+    db.collection("video_clips").createIndex({ s3Key: 1 }, { unique: true }),
     // video_clips: per-resident clip list, and lookup by linked event
     db.collection("video_clips").createIndex({ residentId: 1, createdAt: -1 }),
     db.collection("video_clips").createIndex({ eventId: 1 }),

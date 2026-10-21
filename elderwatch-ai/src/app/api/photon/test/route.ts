@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { isPhotonConfigured, photonErrorMessage, sendPhotonMessage } from "@/lib/photon";
 
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 let sending = false;
 let lastSent = 0;
 
-export async function POST() {
+async function POSTHandler() {
   if (!isPhotonConfigured()) {
     return NextResponse.json({ error: "Photon is not configured." }, { status: 503 });
   }
@@ -25,3 +26,5 @@ export async function POST() {
     sending = false;
   }
 }
+
+export const POST = withAuth(POSTHandler);

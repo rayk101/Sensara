@@ -1,9 +1,10 @@
+import { withAuth } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { isSmsConfigured } from "@/lib/sms";
 
 // POST /api/sms/test
 // Sends a test SMS to CAREGIVER_PHONE_NUMBER to verify Twilio credentials.
-export async function POST() {
+async function POSTHandler() {
   if (!isSmsConfigured()) {
     return NextResponse.json(
       { error: "SMS not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, and CAREGIVER_PHONE_NUMBER." },
@@ -31,3 +32,5 @@ export async function POST() {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);

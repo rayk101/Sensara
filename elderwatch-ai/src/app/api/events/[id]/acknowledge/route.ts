@@ -1,15 +1,14 @@
+import { withAuth, currentActor } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { acknowledgeEvent } from "@/lib/db/events";
 
-export async function PATCH(
+async function PATCHHandler(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const body = await req.json().catch(() => ({}));
-    const acknowledgedBy = body?.acknowledgedBy ?? "Demo Caregiver";
-    if (typeof acknowledgedBy !== "string" || !acknowledgedBy.trim()) return NextResponse.json({ error: "Invalid caregiver name" }, { status: 400 });
+    const acknowledgedBy = currentActor().name;
     const updated = await acknowledgeEvent(id, acknowledgedBy);
     if (!updated) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
@@ -20,3 +19,5 @@ export async function PATCH(
     return NextResponse.json({ error: "Failed to acknowledge event" }, { status: 500 });
   }
 }
+
+export const PATCH = withAuth(PATCHHandler);

@@ -32,6 +32,11 @@ export type EventTypeValue = (typeof EventType)[keyof typeof EventType];
 // ─── Mock Resident Profile (MOCK DATA ONLY — not real patient data) ───────────
 export interface ResidentProfile {
   id: string;
+  active?: boolean;
+  monitoringStatus?: string;
+  assignedStaffIds?: string[];
+  supportedUseCases?: string[];
+  monitoringConfig?: { recordingEnabled: boolean; audioEnabled: boolean };
   name: string;
   age: number;
   room: string;
@@ -74,6 +79,13 @@ export interface SafetyClassification {
 // ─── A persisted safety event (stored in MongoDB) ────────────────────────────
 export interface SafetyEvent {
   _id?: string;
+  idempotencyKey?: string;
+  sessionId?: string | null;
+  status?: "open" | "acknowledged" | "resolved";
+  initialStatus?: "open";
+  resolvedAt?: string | null;
+  stateHistory?: Array<{ status: string; at: string; by: string }>;
+  notificationsQueued?: boolean;
   residentId: string;
   residentName: string;
   room: string;
@@ -108,6 +120,11 @@ export interface VideoClipMeta {
 export interface VideoClip {
   _id?: string;
   eventId?: string | null;
+  fileSize?: number;
+  uploadStatus?: "pending" | "uploaded" | "failed";
+  uploadedAt?: string;
+  expiresAt?: string;
+  footageType?: "post-event";
   residentId: string;
   residentName: string;
   room: string;

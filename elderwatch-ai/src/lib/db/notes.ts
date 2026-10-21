@@ -1,3 +1,5 @@
+import { assertPatient, currentActor } from "../platform/auth";
+import { getSafetyEvent } from "./events";
 import { ObjectId } from "mongodb";
 import { getDb, isMongoEnabled } from "../mongodb";
 import { MOCK_NOTES, getInMemoryStore } from "../mockData";
@@ -8,6 +10,8 @@ const COLLECTION = "caregiver_notes";
 export async function createCaregiverNote(
   note: Omit<CaregiverNote, "_id">
 ): Promise<CaregiverNote> {
+  assertPatient(note.residentId);
+  note.createdBy = currentActor().name;
   if (!isMongoEnabled()) {
     const stored: CaregiverNote = { ...note, _id: new ObjectId().toHexString() };
     return getInMemoryStore().createNote(stored);
@@ -18,6 +22,7 @@ export async function createCaregiverNote(
 }
 
 export async function getNotesForEvent(eventId: string): Promise<CaregiverNote[]> {
+  if (!await getSafetyEvent(eventId)) return [];
   if (!isMongoEnabled()) {
     return getInMemoryStore().getNotesForEvent(eventId);
   }

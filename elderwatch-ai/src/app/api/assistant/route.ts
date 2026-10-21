@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import type { ResidentProfile, SafetyClassification } from "@/lib/types";
 import { RECOMMENDED_ACTIONS } from "@/lib/classifySafety";
@@ -187,7 +188,7 @@ Caregiver question: ${question}`;
   return data.content?.[0]?.text ?? "No guidance available at this time.";
 }
 
-export async function POST(req: Request) {
+async function POSTHandler(req: Request) {
   try {
     const body: AssistantRequest = await req.json();
     const { question, resident, classification } = body;
@@ -222,3 +223,5 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Assistant unavailable" }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);

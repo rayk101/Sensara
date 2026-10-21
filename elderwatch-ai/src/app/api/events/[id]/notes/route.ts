@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -5,7 +6,7 @@ import { getNotesForEvent, createCaregiverNote } from "@/lib/db/notes";
 import { getSafetyEvent } from "@/lib/db/events";
 import type { CaregiverNote } from "@/lib/types";
 
-export async function GET(
+async function GETHandler(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -19,7 +20,7 @@ export async function GET(
   }
 }
 
-export async function POST(
+async function POSTHandler(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -53,3 +54,6 @@ export async function POST(
     return NextResponse.json({ error: "Failed to create note" }, { status: 500 });
   }
 }
+
+export const GET = withAuth(GETHandler);
+export const POST = withAuth(POSTHandler);

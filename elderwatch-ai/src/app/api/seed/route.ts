@@ -1,3 +1,4 @@
+import { withAuth, requireAdmin } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { ensureIndexes } from "@/lib/db/indexes";
 import { seedResidents } from "@/lib/db/residents";
@@ -7,7 +8,8 @@ import { seedVideoClips } from "@/lib/db/videoClips";
 import { isMongoEnabled } from "@/lib/mongodb";
 import { isS3Configured } from "@/lib/s3";
 
-export async function POST() {
+async function POSTHandler() {
+  requireAdmin();
   if (!isMongoEnabled()) {
     return NextResponse.json({
       message: "Running in demo mode — in-memory data already pre-loaded. No seeding needed.",
@@ -26,6 +28,8 @@ export async function POST() {
     });
   } catch (err) {
     console.error("POST /api/seed error:", err);
-    return NextResponse.json({ error: "Seed failed", details: String(err) }, { status: 500 });
+    return NextResponse.json({ error: "Seed failed" }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);

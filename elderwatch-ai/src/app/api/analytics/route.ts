@@ -1,10 +1,11 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
 import { getEventAnalytics } from "@/lib/db/events";
 import { isMongoEnabled } from "@/lib/mongodb";
 
-export async function GET() {
+async function GETHandler() {
   try {
     const analytics = await getEventAnalytics();
     return NextResponse.json({ ...analytics, mongoConnected: isMongoEnabled() });
@@ -13,3 +14,5 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to fetch analytics" }, { status: 500 });
   }
 }
+
+export const GET = withAuth(GETHandler);

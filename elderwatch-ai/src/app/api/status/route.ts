@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -10,7 +11,7 @@ import { isEmailAlertsConfigured } from "@/lib/emailAlerts";
 // GET /api/status
 // Returns actual connectivity state: pings MongoDB and checks S3 env vars.
 // Used by the dashboard header indicators on mount.
-export async function GET() {
+async function GETHandler() {
   let mongoConnected = false;
 
   if (isMongoEnabled()) {
@@ -32,3 +33,5 @@ export async function GET() {
     demoMode: !isMongoEnabled(),
   });
 }
+
+export const GET = withAuth(GETHandler);

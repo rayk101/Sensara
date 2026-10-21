@@ -1,10 +1,11 @@
+import { withAuth } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { isEmailAlertsConfigured } from "@/lib/emailAlerts";
 
 // POST /api/email-alerts/test
 // Sends a test email to the configured caregiver address.
-export async function POST() {
+async function POSTHandler() {
   if (!isEmailAlertsConfigured()) {
     return NextResponse.json(
       { error: "Email alerts not configured. Set RESEND_API_KEY, CAREGIVER_EMAIL, and ALERT_FROM_EMAIL." },
@@ -32,3 +33,5 @@ export async function POST() {
     return NextResponse.json({ error: "Failed to send test email." }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);

@@ -33,6 +33,7 @@ const MAX_TIMELINE_LENGTH = 50;
 
 interface MonitorOptions {
   isPaused?: boolean;
+  sessionId?: string | null;
   seizureDetectionEnabled?: boolean;
 }
 
@@ -47,6 +48,7 @@ export function useResidentMonitor(
   safeZone: SafeZone = DEFAULT_SAFE_ZONE,
   options: MonitorOptions = {}
 ) {
+  const sessionId = options.sessionId;
   const isPaused = options.isPaused ?? false;
   const seizureDetectionEnabled = options.seizureDetectionEnabled ?? false;
 
@@ -128,7 +130,7 @@ export function useResidentMonitor(
 
   const saveEvent = useCallback(async (profile: ResidentProfile, classification: SafetyClassification, signals: SafetySignals) => {
     try {
-      const saved = await persistEvent(profile, classification, signals);
+      const saved = await persistEvent(profile, classification, signals, sessionId);
       if (profile.id === residentIdRef.current) {
         upsertEvent(saved);
         setPersistenceError(null);
@@ -139,7 +141,7 @@ export function useResidentMonitor(
         setPersistenceError("Could not save the latest alert. Check the server connection.");
       }
     }
-  }, [upsertEvent]);
+  }, [upsertEvent, sessionId]);
 
   // Invoked by the camera frame callback, never by a state-derived effect.
   const processFrame = useCallback((landmarks: PoseLandmark[] | null) => {
@@ -347,13 +349,15 @@ export function useResidentMonitor(
 async function persistEvent(
   resident: ResidentProfile,
   classification: SafetyClassification,
-  signals: SafetySignals
+  signals: SafetySignals,
+  sessionId?: string | null
 ): Promise<SafetyEvent> {
   const { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible } = signals;
   const response = await fetch("/api/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      sessionId, idempotencyKey: `${sessionId}:${classification.eventType}:${classification.severity}`,
       residentId: resident.id, residentName: resident.name, room: resident.room,
       ...classification,
       signals: { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible },

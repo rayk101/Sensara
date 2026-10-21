@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -7,13 +8,11 @@ import {
   classifyAudioTranscript,
   type AudioClassification,
 } from "@/lib/elevenlabs";
-import { createSafetyEvent } from "@/lib/db/events";
-import { sendUrgentEmailAlert } from "@/lib/emailAlerts";
-import { sendUrgentPhotonAlert } from "@/lib/photon";
+import { submitIncident } from "@/lib/platform/incidents";
 import type { SafetyEvent } from "@/lib/types";
 
 // GET — lightweight ElevenLabs status check
-export async function GET() {
+async function GETHandler() {
   return NextResponse.json({ elevenLabsConfigured: isElevenLabsConfigured() });
 }
 
@@ -21,7 +20,7 @@ export async function GET() {
 // Accepts multipart/form-data with an audio blob. Calls ElevenLabs STT,
 // classifies for distress, and persists a safety event if severity >= watch.
 // Also supports { simulate: true } JSON body for demo triggers.
-export async function POST(req: Request) {
+async function POSTHandler(req: Request) {
   try {
     const contentType = req.headers.get("content-type") ?? "";
 
@@ -31,6 +30,8 @@ export async function POST(req: Request) {
     let residentName = "Eleanor Brooks";
     let room = "Room 204";
     let isSimulation = false;
+    let sessionId: string | null = null;
+    let requestId: string | null = null;
 
     if (contentType.includes("multipart/form-data")) {
       // Real audio analysis
@@ -51,6 +52,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "No audio file provided" }, { status: 400 });
       }
 
+      if (!(audioFile instanceof File) || audioFile.size > 10 * 1024 * 1024 || !/^(audio|video)\//.test(audioFile.type)) return NextResponse.json({ error: "Invalid audio file (maximum 10 MB)" }, { status: 400 });
+      sessionId = form.get("sessionId") as string | null;
+      requestId = form.get("idempotencyKey") as string | null;
       const buffer = Buffer.from(await audioFile.arrayBuffer());
       const result = await transcribeAudioWithElevenLabs(buffer, audioFile.type || "audio/webm");
       transcript = result.transcript;
@@ -62,6 +66,8 @@ export async function POST(req: Request) {
       residentName = body.residentName ?? residentName;
       room = body.room ?? room;
       isSimulation = body.simulate === true;
+      sessionId = body.sessionId ?? null;
+      requestId = body.idempotencyKey ?? null;
 
       if (isSimulation) {
         transcript = "Help! I can't get up. Please help me.";
@@ -99,12 +105,10 @@ export async function POST(req: Request) {
         acknowledgedAt: null,
         createdAt: new Date().toISOString(),
       };
-      const saved = await createSafetyEvent(event);
+      const saved = await submitIncident({ ...event, sessionId, idempotencyKey: requestId });
       savedEvent = saved;
 
-      if (saved.severity === "urgent") {
-        void Promise.allSettled([sendUrgentEmailAlert(saved), sendUrgentPhotonAlert(saved)]);
-      }
+
     }
 
     // Only trigger clip recording for urgent events to avoid S3 spam
@@ -135,3 +139,6 @@ const AUDIO_RECOMMENDED_ACTIONS: Record<string, string> = {
   possible_choking:
     "Possible choking or breathing distress detected. Go to the resident immediately. Ask if they can breathe and speak. Call emergency services if needed.",
 };
+
+export const GET = withAuth(GETHandler);
+export const POST = withAuth(POSTHandler);

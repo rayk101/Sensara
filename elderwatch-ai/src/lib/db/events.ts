@@ -1,3 +1,4 @@
+import { assertPatient, patientScope, currentActor, ApiError } from "../platform/auth";
 import { ObjectId } from "mongodb";
 import { getDb, isMongoEnabled } from "../mongodb";
 import { generateMockEvents, getInMemoryStore } from "../mockData";
@@ -7,23 +8,32 @@ import type { SafetyEvent, DashboardAnalytics, ResidentHistory, EventTypeValue, 
 const COLLECTION = "safety_events";
 
 export async function createSafetyEvent(event: Omit<SafetyEvent, "_id">): Promise<SafetyEvent> {
+  assertPatient(event.residentId);
   if (!isMongoEnabled()) {
+    const existing = event.idempotencyKey && getInMemoryStore().getRecentEvents(100000).find(e => e.idempotencyKey === event.idempotencyKey);
+    if (existing) return existing;
     const stored: SafetyEvent = { ...event, _id: new ObjectId().toHexString() };
     return getInMemoryStore().createEvent(stored);
   }
   const db = await getDb();
+  if (event.idempotencyKey) {
+    const col = db.collection(COLLECTION);
+    await col.updateOne({ idempotencyKey: event.idempotencyKey }, { $setOnInsert: event }, { upsert: true });
+    const saved = await col.findOne({ idempotencyKey: event.idempotencyKey });
+    return { ...saved, _id: saved!._id.toString() } as unknown as SafetyEvent;
+  }
   const result = await db.collection(COLLECTION).insertOne(event);
   return { ...event, _id: result.insertedId.toHexString() };
 }
 
 export async function getRecentEvents(limit = 50): Promise<SafetyEvent[]> {
   if (!isMongoEnabled()) {
-    return getInMemoryStore().getRecentEvents(limit);
+    return getInMemoryStore().getRecentEvents(100000).filter(e => { try { assertPatient(e.residentId); return true; } catch { return false; } }).slice(0, limit);
   }
   const db = await getDb();
   return db
     .collection<SafetyEvent>(COLLECTION)
-    .find({})
+    .find(patientScope())
     .sort({ createdAt: -1 })
     .limit(limit)
     .toArray() as Promise<SafetyEvent[]>;
@@ -33,6 +43,7 @@ export async function getEventsByResident(
   residentId: string,
   limit = 30
 ): Promise<SafetyEvent[]> {
+  assertPatient(residentId);
   if (!isMongoEnabled()) {
     return getInMemoryStore().getEventsByResident(residentId, limit);
   }
@@ -45,46 +56,43 @@ export async function getEventsByResident(
     .toArray() as Promise<SafetyEvent[]>;
 }
 
-export async function acknowledgeEvent(
-  id: string,
-  acknowledgedBy: string
-): Promise<SafetyEvent | null> {
-  if (!isMongoEnabled()) {
-    return getInMemoryStore().acknowledgeEvent(id, acknowledgedBy);
-  }
-  const db = await getDb();
+export async function acknowledgeEvent(id: string, acknowledgedBy: string): Promise<SafetyEvent | null> {
+  return transitionIncident(id, "acknowledged", acknowledgedBy);
+}
+export async function transitionIncident(id: string, status: "acknowledged" | "resolved", by = currentActor().name): Promise<SafetyEvent | null> {
+  const event = await getSafetyEvent(id);
+  if (!event) return null;
+  if (event.status === status) return event;
+  if (event.status === "resolved" || (status === "resolved" && !event.acknowledged)) throw new ApiError(409, "Acknowledge the incident before resolving it; resolved incidents cannot reopen");
   const now = new Date().toISOString();
-  let filter: object;
-  try {
-    filter = { _id: new ObjectId(id) };
-  } catch {
-    filter = { _id: id };
-  }
-  const result = await db.collection<SafetyEvent>(COLLECTION).findOneAndUpdate(
-    filter,
-    { $set: { acknowledged: true, acknowledgedBy, acknowledgedAt: now } },
-    { returnDocument: "after" }
-  );
-  return result as SafetyEvent | null;
+  const update = status === "acknowledged" ? { status, acknowledged: true, acknowledgedAt: now, acknowledgedBy: by } : { status, resolvedAt: now };
+  const entry = { status, at: now, by };
+  if (!isMongoEnabled()) { Object.assign(event, update); (event.stateHistory ??= []).push(entry); return event; }
+  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, status: event.status ?? { $exists: false } };
+  const result = await (await getDb()).collection<SafetyEvent>(COLLECTION).findOneAndUpdate(filter as object, { $set: update, $push: { stateHistory: entry } }, { returnDocument: "after" });
+  return (result ?? await getSafetyEvent(id)) as unknown as SafetyEvent;
 }
 
 export async function getEventAnalytics(): Promise<DashboardAnalytics> {
   if (!isMongoEnabled()) {
-    return getInMemoryStore().getAnalytics() as DashboardAnalytics;
+    const all = (await getRecentEvents(100000)).filter(e => Date.parse(e.createdAt) >= Date.now() - 86400_000);
+    const types = new Map<string, number>(), patients = new Map<string, { name: string; room: string; count: number }>();
+    for (const e of all) { types.set(e.eventType, (types.get(e.eventType) ?? 0) + 1); const p = patients.get(e.residentId) ?? { name: e.residentName, room: e.room, count: 0 }; p.count++; patients.set(e.residentId, p); }
+    return { totalEventsLast24h: all.length, urgentEventsLast24h: all.filter(e => e.severity === "urgent").length, assistEventsLast24h: all.filter(e => e.severity === "assist").length, mostFrequentEventType: ([...types].sort((a,b) => b[1]-a[1])[0]?.[0] as EventTypeValue) ?? null, residentWithMostAlerts: [...patients.values()].sort((a,b) => b.count-a.count)[0] ?? null };
   }
   const db = await getDb();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const [total, urgent, assist] = await Promise.all([
-    db.collection(COLLECTION).countDocuments({ createdAt: { $gte: cutoff } }),
-    db.collection(COLLECTION).countDocuments({ severity: "urgent", createdAt: { $gte: cutoff } }),
-    db.collection(COLLECTION).countDocuments({ severity: "assist", createdAt: { $gte: cutoff } }),
+    db.collection(COLLECTION).countDocuments({ ...patientScope(), createdAt: { $gte: cutoff } }),
+    db.collection(COLLECTION).countDocuments({ ...patientScope(), severity: "urgent", createdAt: { $gte: cutoff } }),
+    db.collection(COLLECTION).countDocuments({ ...patientScope(), severity: "assist", createdAt: { $gte: cutoff } }),
   ]);
 
   const typeAgg = await db
     .collection(COLLECTION)
     .aggregate([
-      { $match: { createdAt: { $gte: cutoff } } },
+      { $match: { ...patientScope(), createdAt: { $gte: cutoff } } },
       { $group: { _id: "$eventType", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 1 },
@@ -94,7 +102,7 @@ export async function getEventAnalytics(): Promise<DashboardAnalytics> {
   const residentAgg = await db
     .collection(COLLECTION)
     .aggregate([
-      { $match: { createdAt: { $gte: cutoff } } },
+      { $match: { ...patientScope(), createdAt: { $gte: cutoff } } },
       {
         $group: {
           _id: "$residentId",
@@ -120,6 +128,7 @@ export async function getEventAnalytics(): Promise<DashboardAnalytics> {
 }
 
 export async function getResidentHistory(residentId: string): Promise<ResidentHistory> {
+  assertPatient(residentId);
   if (!isMongoEnabled()) {
     return getInMemoryStore().getResidentHistory(residentId) as ResidentHistory;
   }
@@ -179,10 +188,11 @@ export async function seedEvents(): Promise<void> {
 }
 
 export async function getSafetyEvent(id: string): Promise<SafetyEvent | null> {
-  if (!isMongoEnabled()) return getInMemoryStore().getEventById(id);
-  const db = await getDb();
-  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id };
-  return db.collection(COLLECTION).findOne(filter as object) as unknown as Promise<SafetyEvent | null>;
+  let event: SafetyEvent | null;
+  if (!isMongoEnabled()) event = getInMemoryStore().getEventById(id);
+  else event = await (await getDb()).collection(COLLECTION).findOne({ _id: ObjectId.isValid(id) ? new ObjectId(id) : id } as object) as unknown as SafetyEvent | null;
+  if (event) assertPatient(event.residentId);
+  return event;
 }
 
 export async function linkVideoClipToEvent(
@@ -190,6 +200,7 @@ export async function linkVideoClipToEvent(
   clipId: string,
   videoClip: VideoClipMeta
 ): Promise<SafetyEvent | null> {
+  if (!await getSafetyEvent(id)) return null;
   const update = { hasVideoClip: true, videoClipId: clipId, videoClip };
   if (!isMongoEnabled()) {
     const event = getInMemoryStore().getEventById(id);

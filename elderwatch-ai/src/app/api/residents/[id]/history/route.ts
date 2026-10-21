@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -16,7 +17,7 @@ const EMPTY_HISTORY = {
   videoClips: [],
 };
 
-export async function GET(
+async function GETHandler(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -34,3 +35,5 @@ export async function GET(
     return NextResponse.json({ error: "Failed to load history" }, { status: 500 });
   }
 }
+
+export const GET = withAuth(GETHandler);

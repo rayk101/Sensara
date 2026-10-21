@@ -47,7 +47,6 @@ export function useVideoRecorder(
     busyRef.current = true;
 
     let cancelled = false;
-    let ownedMic: MediaStream | null = null;
     let recorder: MediaRecorder | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -65,14 +64,8 @@ export function useVideoRecorder(
           return;
         }
         if (typeof MediaRecorder === "undefined") throw new Error("Video recording is not supported in this browser");
-        let mic = micRef.current;
-        if (!mic?.getAudioTracks().some(track => track.readyState === "live")) {
-          try {
-            ownedMic = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mic = ownedMic;
-          } catch { mic = null; }
-        }
-        if (cancelled) { ownedMic?.getTracks().forEach(track => track.stop()); return; }
+        const mic = micRef.current;
+        if (cancelled) {  return; }
         const videoTracks = stream!.getVideoTracks().filter(track => track.readyState === "live");
         const audioTracks = mic?.getAudioTracks().filter(track => track.readyState === "live") ?? [];
         if (!videoTracks.length) throw new Error("Camera is unavailable");
@@ -83,13 +76,15 @@ export function useVideoRecorder(
         const clipStartTime = new Date().toISOString();
         recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
         recorder.onerror = () => {
+          cancelled = true;
+          clearTimeout(timer);
           busyRef.current = false;
-          ownedMic?.getTracks().forEach(track => track.stop());
+          
           setStatus("error");
           setStatusMessage("Video recording failed. The safety event is still saved.");
         };
         recorder.onstop = () => {
-          ownedMic?.getTracks().forEach(track => track.stop());
+          
           if (cancelled || !recorder) return;
           const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
           void upload(blob, clipStartTime, audioTracks.length > 0);
@@ -97,10 +92,10 @@ export function useVideoRecorder(
         cooldownRef.current[capturedEvent!.residentId] = Date.now() + COOLDOWN_MS;
         recorder.start(1000);
         setStatus("capturing");
-        setStatusMessage("Recording critical event clip…");
+        setStatusMessage("Recording 15-second post-event clip…");
         timer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, CLIP_DURATION_MS);
       } catch (error) {
-        ownedMic?.getTracks().forEach(track => track.stop());
+        
         if (!cancelled) {
           busyRef.current = false;
           setStatus("error");
@@ -117,16 +112,16 @@ export function useVideoRecorder(
         if (!blob.size) throw new Error("The recorded clip was empty");
         const presign = await request("/api/video-clips/presign-upload", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ residentId: capturedEvent!.residentId, eventType: capturedEvent!.eventType, contentType: blob.type }),
+          body: JSON.stringify({ eventId, residentId: capturedEvent!.residentId, contentType: blob.type, fileSize: blob.size }),
         });
         if (!presign.ok) throw new Error("Could not prepare clip upload");
-        const { uploadUrl, s3Key, bucket } = await presign.json();
-        const uploaded = await request(uploadUrl, { method: "PUT", body: blob, headers: { "Content-Type": blob.type } });
+        const { uploadUrl, uploadId, s3Key, bucket, headers } = await presign.json();
+        const uploaded = await request(uploadUrl, { method: "PUT", body: blob, headers: headers ?? { "Content-Type": blob.type, "If-None-Match": "*" } });
         if (!uploaded.ok) throw new Error("Video upload failed");
         const metadata = await request("/api/video-clips", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            eventId, residentId: capturedEvent!.residentId, residentName: capturedEvent!.residentName,
+            uploadId, eventId, residentId: capturedEvent!.residentId, residentName: capturedEvent!.residentName,
             room: capturedEvent!.room, severity: capturedEvent!.severity, eventType: capturedEvent!.eventType,
             s3Key, bucket, contentType: blob.type, clipStartTime, clipEndTime,
             durationSeconds: Math.round((Date.parse(clipEndTime) - Date.parse(clipStartTime)) / 1000),
@@ -154,7 +149,7 @@ export function useVideoRecorder(
       controller.abort();
       clearTimeout(timer);
       if (recorder && recorder.state !== "inactive") recorder.stop();
-      ownedMic?.getTracks().forEach(track => track.stop());
+      
       setStatus("idle");
       setStatusMessage(null);
     };

@@ -1,3 +1,4 @@
+import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -8,7 +9,7 @@ import { isS3Configured, createPresignedDownloadUrl } from "@/lib/s3";
 // Looks up the clip in MongoDB, generates a temporary presigned GET URL.
 // Clips are never served publicly — all playback requires a fresh signed URL.
 
-export async function GET(
+async function GETHandler(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -19,6 +20,7 @@ export async function GET(
       return NextResponse.json({ error: "Clip not found" }, { status: 404 });
     }
 
+    if (clip.expiresAt && Date.parse(clip.expiresAt) <= Date.now()) return NextResponse.json({ error: "Clip retention period has expired" }, { status: 410 });
     if (!isS3Configured()) {
       return NextResponse.json(
         { s3Disabled: true, message: "S3 not configured — no playback URL available for demo clips." },
@@ -33,3 +35,5 @@ export async function GET(
     return NextResponse.json({ error: "Failed to generate playback URL" }, { status: 500 });
   }
 }
+
+export const GET = withAuth(GETHandler);

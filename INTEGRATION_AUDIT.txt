@@ -1,0 +1,66 @@
+Sensara integration audit — 2026-10-21 (before this implementation)
+
+Architecture
+Next.js 15.5.28 App Router, React 18, TypeScript, Node >=22. Browser fetches
+Node route handlers under src/app/api. MongoDB native driver with pooled
+connections; AWS SDK v3 with browser presigned PUT uploads. Railway Docker
+standalone deployment is prepared; no live Railway deployment is configured.
+No authentication, authorization, CI, persistent sessions, or resolution flow.
+
+Authoritative scenarios (MultiFeedDemo / DemoVideoTile)
+feed1: resident_001, Eleanor Brooks, Room 204, fall-demo.mp4.
+Stable <5s, unsafe posture/watch <10s, then possible fall/urgent.
+feed2: resident_002, Robert Hayes, Room 118, stable-demo.mp4; always stable.
+feed3: resident_003, Margaret Chen, Room 312, wandering-demo.mp4.
+Stable <13s, then wandering/watch. Do not promote this to urgent artificially.
+feed4: demo_resident_004, Daniel Price, Lounge Area, choking-demo.mp4.
+Stable <4s, then possible choking/urgent.
+These are timed simulations, not real detection on prerecorded footage.
+
+Working evidence from the preceding integration work
+MongoDB Atlas ping and event persistence; S3 private upload and playback;
+ElevenLabs Scribe transcription on synthetic audio; 20 regression tests;
+production compilation. The live pose pipeline uses MediaPipe 0.10.14, GPU
+with CPU fallback; the previous render loop has regression coverage.
+
+Partial / broken
+The four feeds hardcode patient snapshots and persist only on Save.
+Camera events persist through /api/events; audio events use a separate path.
+Only acknowledgments exist, and client-provided identity is trusted.
+Recorder produces 15-second post-event footage, with no pre-event buffer.
+Recorder can request microphone unexpectedly and skip concurrent incidents.
+S3 presigning trusts patient/type input, metadata trusts claimed upload success,
+and clip-link endpoint accepts arbitrary keys. No size/ownership enforcement.
+Speech alerts use browser speechSynthesis, not ElevenLabs TTS.
+Photon credentials initialize, but real sends fail: Target not allowed for this
+project. The enrolled number matches configured destination ending 0558.
+Notifications are fire-and-forget, cooldowns process-local, no durable status.
+Collections residents and safety_events already hold patient/incident data;
+retain them as logical patients/incidents to avoid a destructive migration.
+
+Missing / configuration / credentials
+Add durable monitoring_sessions, notifications, application_settings and staff
+assignments; validated patient CRUD, incident idempotency/state transitions,
+scoped access, signed sessions, verified uploads and retention enforcement.
+Existing ElevenLabs key permits STT only: TTS permission and voice selection
+need provider configuration. Photon recipient authorization is unresolved.
+Twilio/Resend are optional adapters and currently unconfigured.
+Existing S3 IAM only permits critical-events/*; retain that scope and nest
+patient/incident/clip IDs within it rather than silently expanding permissions.
+AWS lifecycle/logging administration is outside the existing upload IAM scope.
+Clinical use requires separate access/privacy agreements and validation; no
+clinical or production-readiness claim is established by these demo tests.
+
+Testing plan
+Run deterministic tests for each original scenario (including no urgent alert
+for stable/wandering), authorization isolation, idempotency, state transitions,
+session switching, notification retries, TTS failures/queues and upload checks.
+Use fictional fixtures and mocked transports for failure/duplicate tests.
+Use an isolated Atlas test database for restart/persistence checks, a synthetic
+15-second clip for S3, and explicitly labeled messages/audio for live checks.
+Exercise dashboard/browser behavior separately from provider acceptance and
+device delivery. Report untested hardware/provider boundaries explicitly.
+
+Input scope note
+The user's pasted instructions stop mid-sentence in Phase 9. Continue with the
+stated shared incident lifecycle while awaiting any remaining instructions.

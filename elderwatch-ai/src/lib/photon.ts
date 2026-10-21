@@ -13,7 +13,7 @@ export function photonErrorMessage(error: unknown): string {
   return "Photon could not send the message. Check the project and enrolled iMessage number.";
 }
 
-export async function sendPhotonMessage(body: string): Promise<void> {
+export async function sendPhotonMessage(body: string, destination = process.env.CAREGIVER_PHONE_NUMBER!): Promise<string | null> {
   if (!isPhotonConfigured()) throw new Error("Photon is not configured");
   const [{ Spectrum }, { imessage }] = await Promise.all([
     import("@spectrum-ts/core"), import("@spectrum-ts/imessage"),
@@ -28,9 +28,10 @@ export async function sendPhotonMessage(body: string): Promise<void> {
   });
   try {
     const provider = imessage(app);
-    const recipient = await provider.user(process.env.CAREGIVER_PHONE_NUMBER!);
+    const recipient = await provider.user(destination);
     const conversation = await provider.space.create(recipient);
-    await conversation.send(body);
+    const result = await conversation.send(body);
+    return result?.id ?? null;
   } finally {
     await app.stop();
   }
@@ -59,7 +60,7 @@ export function createPhotonAlertSender(send: (body: string) => Promise<void>, n
   };
 }
 
-const sendAlert = createPhotonAlertSender(sendPhotonMessage);
+const sendAlert = createPhotonAlertSender(async body => { await sendPhotonMessage(body); });
 
 export async function sendUrgentPhotonAlert(event: SafetyEvent): Promise<void> {
   if (!isPhotonConfigured()) return;
