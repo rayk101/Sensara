@@ -17,6 +17,7 @@ export interface FeedAlert {
 
 interface FacilityAlertPanelProps {
   alerts: FeedAlert[];
+  isPaused?: boolean;
   onMarkCare?: (feedId: string) => Promise<void>;
   onSaveToHistory?: (alert: FeedAlert) => Promise<void>;
   onSaveAll?: () => Promise<void>;
@@ -55,6 +56,7 @@ function formatWaitTime(alertSince: number): string {
 
 export default function FacilityAlertPanel({
   alerts,
+  isPaused = false,
   onMarkCare,
   onSaveToHistory,
   onSaveAll,
@@ -129,13 +131,13 @@ export default function FacilityAlertPanel({
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-sensara-divider shrink-0">
         <div>
           <h3 className="text-sensara-forest-900 font-semibold text-sm">Facility Alert Panel</h3>
-          <p className="text-sensara-warm-600 text-[10px] mt-0.5">Simulated multi-room monitoring</p>
+          <p className="text-sensara-warm-600 text-[10px] mt-0.5">{isPaused ? "Monitoring paused" : "Simulated multi-room monitoring"}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1.5 bg-sensara-warm-100 border border-sensara-divider rounded-full px-2.5 py-1">
             <div className={`w-1.5 h-1.5 rounded-full ${urgentCount > 0 ? "bg-red-500 animate-pulse" : activeAlerts.length > 0 ? "bg-yellow-500 animate-pulse" : "bg-green-500"}`} />
             <span className="text-[10px] text-sensara-forest-700">
-              {activeAlerts.length === 0 ? "No current feed alerts" : `${activeAlerts.length} alert${activeAlerts.length !== 1 ? "s" : ""}`}
+              {isPaused ? "Paused" : activeAlerts.length === 0 ? "No current feed alerts" : `${activeAlerts.length} alert${activeAlerts.length !== 1 ? "s" : ""}`}
             </span>
           </div>
           {activeAlerts.length > 0 && (
@@ -160,7 +162,7 @@ export default function FacilityAlertPanel({
             <div className="w-10 h-10 rounded-full bg-green-100 border border-green-300 flex items-center justify-center mb-3">
               <span className="text-green-600 text-lg">✓</span>
             </div>
-            <p className="text-sensara-forest-700 text-sm font-medium">No current detector alerts</p>
+            <p className="text-sensara-forest-700 text-sm font-medium">{isPaused ? "Start the demo to monitor feeds" : "No current detector alerts"}</p>
             <p className="text-sensara-warm-500 text-[10px] mt-1">Review saved incidents above. Monitoring may be paused.</p>
           </div>
         ) : (

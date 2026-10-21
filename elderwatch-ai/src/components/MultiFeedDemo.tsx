@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import DemoVideoTile, { type DemoFeedConfig, type DemoFeedStatus } from "./DemoVideoTile";
 import FacilityAlertPanel, { type FeedAlert } from "./FacilityAlertPanel";
 
@@ -18,11 +18,11 @@ const defaultFeedState: FeedState = {
   alertSince: 0,
 };
 
-export default function MultiFeedDemo({ isPaused = false, residents, events }: { isPaused?: boolean; residents: ResidentProfile[]; events: SafetyEvent[] }) {
-  const DEMO_FEEDS: DemoFeedConfig[] = DEMO_SCENARIOS.flatMap(scenario => {
+export default function MultiFeedDemo({ isPaused = false, residents, events, onAlertsChange }: { isPaused?: boolean; residents: ResidentProfile[]; events: SafetyEvent[]; onAlertsChange: (alerts: FeedAlert[]) => void }) {
+  const DEMO_FEEDS: DemoFeedConfig[] = useMemo(() => DEMO_SCENARIOS.flatMap(scenario => {
     const patient = residents.find(r => r.id === scenario.residentId && r.active !== false);
     return patient ? [{ ...scenario, resident: patient.name, room: patient.room }] : [];
-  });
+  }), [residents]);
   const [feedStates, setFeedStates] = useState<Record<string, FeedState>>({});
 
   const handleStatusChange = useCallback((feedId: string, status: DemoFeedStatus) => {
@@ -40,7 +40,7 @@ export default function MultiFeedDemo({ isPaused = false, residents, events }: {
     });
   }, []);
 
-  const alerts: FeedAlert[] = DEMO_FEEDS.map(feed => {
+  const alerts: FeedAlert[] = useMemo(() => DEMO_FEEDS.map(feed => {
     const state = feedStates[feed.id] ?? defaultFeedState;
     return {
       feedId: feed.id,
@@ -51,10 +51,36 @@ export default function MultiFeedDemo({ isPaused = false, residents, events }: {
       eventType: state.eventType,
       reason: state.reason,
       confidence: state.confidence,
-      alertSince: state.alertSince || Date.now(),
+      alertSince: state.alertSince,
     };
-  });
+  }), [DEMO_FEEDS, feedStates]);
+  useEffect(() => { onAlertsChange(alerts); }, [alerts, onAlertsChange]);
 
+  return (
+    <div className="flex flex-col gap-5">
+      {DEMO_FEEDS.length < 4 && <p role="alert" className="text-sm text-amber-800">Some scenario patients are unavailable or not assigned to this account.</p>}
+      {/* Two-column video grid; alerts are rendered in the dashboard sidebar. */}
+      <div className="min-w-0">
+        {/* 2×2 video grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {DEMO_FEEDS.map(feed => (
+            <DemoVideoTile
+              key={feed.id}
+              config={feed}
+              activeUrgent={events.some(e => e.residentId === feed.residentId && e.severity === "urgent" && !["resolved", "dismissed"].includes(e.status ?? ""))}
+              isPaused={isPaused}
+              onStatusChange={handleStatusChange}
+            />
+          ))}
+        </div>
+
+
+      </div>
+    </div>
+  );
+}
+
+export function DemoAlertPanel({ alerts, events, isPaused }: { alerts: FeedAlert[]; events: SafetyEvent[]; isPaused: boolean }) {
   const saveEvent = async (alert: FeedAlert) => {
     if (alert.severity === "stable") return;
     const response = await fetch("/api/events", {
@@ -83,28 +109,11 @@ export default function MultiFeedDemo({ isPaused = false, residents, events }: {
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      {DEMO_FEEDS.length < 4 && <p role="alert" className="text-sm text-amber-800">Some scenario patients are unavailable or not assigned to this account.</p>}
-      {/* Main layout: 2×2 grid + alert panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-5 items-start">
-        {/* 2×2 video grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {DEMO_FEEDS.map(feed => (
-            <DemoVideoTile
-              key={feed.id}
-              config={feed}
-              activeUrgent={events.some(e => e.residentId === feed.residentId && e.severity === "urgent" && !["resolved", "dismissed"].includes(e.status ?? ""))}
-              isPaused={isPaused}
-              onStatusChange={handleStatusChange}
-            />
-          ))}
-        </div>
-
-        {/* Facility alert panel */}
         <FacilityAlertPanel
-          alerts={alerts}
+          alerts={isPaused ? [] : alerts}
+          isPaused={isPaused}
           onMarkCare={async feedId => {
-            const feed = DEMO_FEEDS.find(f => f.id === feedId);
+            const feed = alerts.find(f => f.feedId === feedId);
             const active = events.filter(e => e.residentId === feed?.residentId && !["resolved", "dismissed"].includes(e.status ?? ""));
             if (!active.length) throw new Error("No saved incident yet");
             await Promise.all(active.map(async e => { const r = await fetch(`/api/events/${e._id}/acknowledge`, { method: "PATCH" }); if (!r.ok) throw new Error("Acknowledgment failed"); }));
@@ -112,7 +121,5 @@ export default function MultiFeedDemo({ isPaused = false, residents, events }: {
           onSaveToHistory={saveEvent}
           onSaveAll={handleSaveAll}
         />
-      </div>
-    </div>
   );
 }

@@ -3,7 +3,7 @@ Sensara verification report — 2026-10-21
 Result
 The application is running locally at http://127.0.0.1:3002, with monitoring
 paused until the user supplies consent and resumes it. The production build,
-lint, TypeScript checks and all 43 automated tests pass. This is a tested demo,
+lint, TypeScript checks and all 45 automated tests pass. This is a tested demo,
 not a production-readiness or clinical-reliability certification. The complete
 requested end-to-end acceptance criterion remains blocked by Photon delivery;
 additional coverage and operational work are listed explicitly below.
@@ -43,7 +43,7 @@ What was implemented
   Provider secrets remain in the ignored private .env.local file (mode 0600).
 
 Automated tests — passed, using isolated memory and mocked provider transports
-43 tests cover the original scenario thresholds/identity, pose frame render
+45 tests cover the original scenario thresholds/identity, pose frame render
 regression, permission denial, late camera acquisition after patient switching,
 partial recording and original-patient association, state transitions,
 deduplication, rearming, out-of-order evidence, scoped access, session checks,
@@ -167,3 +167,21 @@ Screenshots saved locally:
 /private/tmp/sensara-four-scenarios.png
 /private/tmp/sensara-playback-completed.png
 /private/tmp/sensara-local-ready.png
+
+Dashboard playback/sidebar follow-up — 2026-10-21
+Moved saved incidents, patient priorities, audio controls, notification outcomes,
+Photon controls and facility alerts into a shared right sidebar on desktop.
+Both monitoring modes use that same sidebar; it stacks below content on mobile.
+Replaced the disabled Resume/checkbox sequence with an explicit Start control
+and authorization explanation. Paused feeds show a visible overlay. Playback
+waits for a saved session, ignores stale rejected play attempts after pause,
+and offers a retry without removing the video element.
+
+Verification: 45 automated tests, lint, types and production build pass. Chrome
+played all four feeds with advancing currentTime and no media errors; Pause
+stopped all four and Start resumed all four. Switching to Live Camera stopped
+the hidden demo feeds and retained a single shared sidebar. Desktop geometry
+confirmed the sidebar is right of the videos with no horizontal page overflow.
+No browser warnings/errors were captured. API/media smoke checks passed on both
+local servers. These UI tests used the isolated verification database with
+provider actions disabled; no new provider delivery claim is made.

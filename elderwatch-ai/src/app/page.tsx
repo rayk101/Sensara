@@ -17,7 +17,8 @@ import EventTimeline from "@/components/EventTimeline";
 import AnalyticsCard from "@/components/AnalyticsCard";
 import AIAssistant from "@/components/AIAssistant";
 import AudioMonitor from "@/components/AudioMonitor";
-import MultiFeedDemo from "@/components/MultiFeedDemo";
+import MultiFeedDemo, { DemoAlertPanel } from "@/components/MultiFeedDemo";
+import type { FeedAlert } from "@/components/FacilityAlertPanel";
 import type { ResidentProfile, SafetyEvent, VideoClip, SafeZone } from "@/lib/types";
 
 // ─── Safe zone localStorage helpers ──────────────────────────────────────────
@@ -60,6 +61,7 @@ export default function Dashboard() {
   const [photonError, setPhotonError] = useState("");
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [isPaused, setIsPaused] = useState(true);
+  const [feedAlerts, setFeedAlerts] = useState<FeedAlert[]>([]);
   const [monitoringConsent, setMonitoringConsent] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
   const [persistedEvents, setPersistedEvents] = useState<SafetyEvent[]>([]);
@@ -71,6 +73,11 @@ export default function Dashboard() {
   const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
   const [activeTab, setActiveTab] = useState<"monitor" | "history">("monitor");
   const [mainTab, setMainTab] = useState<MainTab>("multi-feed");
+
+  const toggleMonitoring = () => {
+    if (isPaused) setMonitoringConsent(true);
+    setIsPaused(paused => !paused);
+  };
 
   // ── Safe zone state with localStorage persistence ────────────────────────────
   const [safeZone, setSafeZone] = useState<SafeZone>(DEFAULT_SAFE_ZONE);
@@ -265,15 +272,14 @@ export default function Dashboard() {
               </span>
             )}
             <button
-              onClick={() => setIsPaused((p) => !p)}
-              disabled={!monitoringConsent}
+              onClick={toggleMonitoring} aria-describedby="monitoring-consent"
               className={`text-xs rounded-lg px-3 py-1.5 transition-colors border font-medium ${
                 isPaused
                   ? "bg-sensara-forest-600 hover:bg-sensara-forest-500 text-white border-sensara-forest-500"
                   : "bg-yellow-700/70 hover:bg-yellow-600/80 text-yellow-100 border-yellow-600"
               }`}
             >
-              {isPaused ? "▶ Resume" : "⏸ Pause"}
+              {isPaused ? (mainTab === "multi-feed" ? "▶ Start demo" : "▶ Start camera") : "⏸ Pause"}
             </button>
           </div>
         </div>
@@ -297,30 +303,20 @@ export default function Dashboard() {
 
       {/* ── Tab content ───────────────────────────────────────────────────── */}
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-5">
-        <label className="mb-3 block text-sm"><input type="checkbox" checked={monitoringConsent} onChange={e => { setMonitoringConsent(e.target.checked); if (!e.target.checked) setIsPaused(true); }} /> I authorize {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "these four fictional demo scenarios"}, 15-second incident recordings, and configured alerts.</label>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sensara-border bg-white p-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold">{isPaused ? (mainTab === "multi-feed" ? "Demo paused — start to play all four feeds" : "Camera monitoring paused") : "Monitoring enabled"}</p>
+            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">Starting authorizes {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "these fictional scenarios"}, 15-second incident recordings and configured alerts. Audio playback has its own control on the right.</p>
+          </div>
+          <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{isPaused ? (mainTab === "multi-feed" ? "Start demo" : "Start camera") : "Pause monitoring"}</button>
+        </div>
         {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError}</p>}
         {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => { setIsPaused(true); setCameraId(e.target.value); }}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
-        <IncidentCenter onEvents={setPersistedEvents} />
-        <Administration residents={residents} onSaved={() => window.location.reload()} />
-        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
-          <span>Photon iMessage: {photonConfigured ? "Configured · check delivery outcomes below" : "Not configured"}</span>
-          {photonConfigured && (
-            <button
-              onClick={handleSendTestPhoton}
-              disabled={photonTestStatus === "sending"}
-              className="rounded-lg bg-sensara-forest-700 px-3 py-1.5 text-white disabled:opacity-60"
-            >
-              {photonTestStatus === "sending" ? "Sending…" : "Test iMessage"}
-            </button>
-          )}
-          <span role="status" className={photonTestStatus === "error" ? "text-red-700" : "text-sensara-forest-700"}>
-            {photonTestStatus === "sent" ? "Test message sent to Photon." : photonError}
-          </span>
-        </div>
-
+        <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="min-w-0">
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>
-          <MultiFeedDemo events={persistedEvents} residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
+          <MultiFeedDemo onAlertsChange={setFeedAlerts} events={persistedEvents} residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
         </div>
 
         {/* ── TAB 2: Live Camera Demo ─────────────────────────────────────── */}
@@ -354,7 +350,7 @@ export default function Dashboard() {
             </div>
 
             {/* Two-column live camera layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-5">
+            <div className="min-w-0">
 
               {/* Left column: Camera + Analytics + AI + Audio */}
               <div className="flex flex-col gap-5">
@@ -470,7 +466,31 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Right column: Resident card + Timeline/History */}
+
+            </div>
+          </div>
+        </div>
+          <Administration residents={residents} onSaved={() => window.location.reload()} />
+        </div>
+        <aside aria-label="Alerts and notifications" className="min-w-0 space-y-4 lg:sticky lg:top-32 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:pr-1">
+        <IncidentCenter onEvents={setPersistedEvents} />
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
+          <span>Photon iMessage: {photonConfigured ? "Configured · see notification outcomes" : "Not configured"}</span>
+          {photonConfigured && (
+            <button
+              onClick={handleSendTestPhoton}
+              disabled={photonTestStatus === "sending"}
+              className="rounded-lg bg-sensara-forest-700 px-3 py-1.5 text-white disabled:opacity-60"
+            >
+              {photonTestStatus === "sending" ? "Sending…" : "Test iMessage"}
+            </button>
+          )}
+          <span role="status" className={photonTestStatus === "error" ? "text-red-700" : "text-sensara-forest-700"}>
+            {photonTestStatus === "sent" ? "Test message sent to Photon." : photonError}
+          </span>
+        </div>
+
+          {mainTab === "multi-feed" ? <DemoAlertPanel alerts={feedAlerts} events={persistedEvents} isPaused={isPaused} /> : (
               <div className="flex flex-col gap-4">
                 <ResidentCard
                   resident={selectedResident}
@@ -508,8 +528,8 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+          )}
+        </aside>
         </div>
       </main>
 

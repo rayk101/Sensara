@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { getScriptedStatus } from "@/lib/demoScenarios";
 import { useMonitoringSession } from "@/hooks/useMonitoringSession";
 import { useVideoRecorder } from "@/hooks/useVideoRecorder";
+import { useDemoPlayback } from "@/hooks/useDemoPlayback";
 import type { SafetyEvent } from "@/lib/types";
 import SafetyBadge from "./SafetyBadge";
 
@@ -68,6 +69,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
     confidence: 0.95,
   });
   const [videoError, setVideoError] = useState(false);
+  const { status: playbackStatus, setStatus: setPlaybackStatus, retry: retryPlayback } = useDemoPlayback(videoRef, isPaused, sessionId);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -82,13 +84,6 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
   }, [isPaused, sessionId]);
   const onStatusChangeRef = useRef(onStatusChange);
   useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (isPaused) video.pause();
-    else void video.play().catch(() => setVideoError(true));
-  }, [isPaused]);
 
   useEffect(() => {
     onStatusChangeRef.current?.(config.id, currentStatus);
@@ -129,7 +124,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
     finally { setIsSaving(false); }
   }, [config.id, config.residentId, currentStatus, sessionId]);
   useEffect(() => {
-    if (isPaused || !sessionId || videoError) return;
+    if (isPaused || !sessionId || videoError || playbackStatus !== "playing") return;
     let stopped = false;
     const observe = async () => {
       try {
@@ -141,7 +136,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
     };
     void observe(); const timer = setInterval(() => { void observe(); }, 3000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [isPaused, sessionId, config.id, config.residentId, videoError]);
+  }, [isPaused, sessionId, config.id, config.residentId, videoError, playbackStatus]);
 
   const priority = activeUrgent ? "urgent" : currentStatus.severity;
   const urgentColor = "#ef4444";
@@ -156,7 +151,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
       <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${SEVERITY_HEADER_BG[priority]}`}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {(isPaused || videoError || !sessionId) && !activeUrgent ? <span className="text-xs text-white">UNKNOWN · Monitoring unavailable</span> : <SafetyBadge severity={priority} size="sm" pulse={priority !== "stable"} />}
+            {(isPaused || videoError || !sessionId || playbackStatus !== "playing") && !activeUrgent ? <span className="text-xs text-white">UNKNOWN · Monitoring unavailable</span> : <SafetyBadge severity={priority} size="sm" pulse={priority !== "stable"} />}
             <span className="text-white text-xs font-semibold">{config.room}</span>
             <span className="text-[9px] text-gray-400 bg-gray-700/60 border border-gray-600/40 rounded px-1.5 py-0.5 shrink-0">
               SIMULATED FEED
@@ -176,29 +171,35 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
 
       {/* Video */}
       <div className="relative bg-gray-900" style={{ aspectRatio: "16/9" }}>
-        {!videoError ? (
           <video
             ref={videoRef}
             src={`/demo-videos/${config.videoFile}`}
-            autoPlay={!isPaused}
             muted
             loop
             playsInline
             onError={() => setVideoError(true)}
+            onPlaying={() => { setPlaybackStatus("playing"); setVideoError(false); }}
+            onPause={() => setPlaybackStatus("paused")}
+            onWaiting={() => setPlaybackStatus("starting")}
             className="w-full h-full object-cover"
           />
-        ) : (
+        {videoError && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 text-center px-4 gap-2">
             <svg className="w-10 h-10 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.893L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
             </svg>
             <div>
-              <p className="text-gray-400 text-xs font-medium">Demo video missing</p>
-              <p className="text-gray-600 text-[10px] mt-1">Add file to:</p>
-              <p className="text-gray-600 text-[10px] font-mono bg-gray-800/60 rounded px-2 py-0.5 mt-1">
-                public/demo-videos/{config.videoFile}
-              </p>
+              <p className="text-gray-300 text-xs font-medium">Demo video could not load</p>
+              <button className="mt-2 rounded border border-gray-500 px-3 py-1 text-xs text-white" onClick={() => { setVideoError(false); videoRef.current?.load(); retryPlayback(); }}>Reload video</button>
             </div>
+          </div>
+        )}
+
+        {!videoError && (isPaused || !sessionId || playbackStatus !== "playing") && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/40 px-4 text-center text-white">
+            <p className="rounded-lg bg-black/60 px-3 py-2 text-sm font-semibold">{isPaused ? "Paused" : sessionError ? "Monitoring unavailable" : !sessionId ? "Starting monitoring…" : playbackStatus === "blocked" ? "Playback paused by browser" : "Loading video…"}</p>
+            {isPaused && <p className="text-xs">Select Start demo above to play all four feeds.</p>}
+            {!isPaused && sessionId && playbackStatus === "blocked" && <button className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-sensara-forest-900" onClick={retryPlayback}>Retry playback</button>}
           </div>
         )}
 
@@ -223,7 +224,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
       {/* Footer */}
       <div className="px-3 py-2 bg-sensara-forest-900/95 flex items-center justify-between gap-2">
         <p className="text-[10px] text-sensara-forest-300 truncate flex-1 min-w-0">
-          {currentStatus.severity !== "stable" ? currentStatus.reason : (isPaused ? "Monitoring paused" : "Monitoring…")}
+          {isPaused ? "Monitoring paused" : playbackStatus !== "playing" ? "Waiting for video playback" : currentStatus.severity !== "stable" ? currentStatus.reason : "Monitoring…"}
         </p>
         <div className="flex items-center gap-1.5 shrink-0">
           {saveMsg && (
@@ -233,7 +234,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
           )}
           <button
             onClick={handleSaveDemoEvent}
-            disabled={isSaving || currentStatus.severity === "stable"}
+            disabled={isSaving || isPaused || !sessionId || currentStatus.severity === "stable"}
             className="text-[10px] bg-sensara-forest-700 hover:bg-sensara-forest-600 disabled:opacity-40 disabled:cursor-not-allowed text-white border border-sensara-forest-500 rounded px-2 py-1 transition-colors whitespace-nowrap"
           >
             {isSaving ? "Saving…" : "Save Event"}

@@ -23,7 +23,7 @@ npm start -- --port 3002
 
 Open http://127.0.0.1:3002. Ctrl+C stops the server. The local npm commands bind to loopback. `LOCAL_DEMO_MODE=true` permits local fictional demonstrations; it is disabled on Railway. Production API requests fail when MongoDB is not configured. In-memory storage is used by isolated unit tests, never as a fallback when Atlas fails.
 
-Monitoring starts paused. Select the consent checkbox, then Resume. Live Camera asks for camera permission; microphone monitoring has its own explicit control and must be enabled in the patient record. Enable Audio Alerts separately. Browser playback can be blocked; use Play blocked alert to start the prepared audio directly. Playback completion does not prove anyone heard the alert.
+Monitoring starts paused. Select Start demo or Start camera to authorize monitoring, recordings and configured alerts. Pause stops playback and monitoring; paused tiles display an explicit overlay. Alerts and notification history are in the right sidebar on desktop. Live Camera asks for camera permission; microphone monitoring has its own explicit control and must be enabled in the patient record. Enable Audio Alerts separately. Browser playback can be blocked; use Play blocked alert to start the prepared audio directly. Playback completion does not prove anyone heard the alert.
 
 ## Existing monitoring modes
 
