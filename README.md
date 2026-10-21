@@ -72,6 +72,8 @@ For optional services, copy the empty example and fill in only the credentials y
 cp .env.local.example .env.local
 ```
 
+Run the copy command only if `.env.local` does not already exist; otherwise edit that file directly. The template contains no credentials.
+
 MongoDB, S3 uploads/playback, ElevenLabs transcription, Anthropic responses, Twilio SMS, and Resend email require their respective settings in `.env.local`. Configuring SMS or email enables real outgoing urgent alerts. Keep this prototype local; it does not implement authentication.
 
 ## Checks
@@ -101,6 +103,19 @@ The Docker setup also includes the demo video/logo assets:
 ```sh
 docker compose up --build
 ```
+
+## Railway setup
+
+The app uses its Dockerfile on Railway and does not require a Vercel account, token, or project link.
+
+1. Connect this repository to a Railway service.
+2. Set the service **Root Directory** to `/elderwatch-ai` and **Config File** to `/elderwatch-ai/railway.json`.
+3. Leave the custom build and start commands unset. The Dockerfile builds the standalone Next.js server and starts it with `node server.js`, listening on `0.0.0.0` and the runtime `PORT`.
+4. Add new integration credentials under the service's **Variables**, using the names in `elderwatch-ai/.env.local.example`. Local env files are excluded from Git and the Docker build context.
+
+For a Railway MongoDB service, assign its connection URL to this app's `MONGODB_URI` variable and set `MONGODB_DB` to your chosen database. Without a URI, the app uses temporary in-memory demo data. S3 recording stays disabled until all four `AWS_*` settings in the template are supplied. Vercel credentials are not used.
+
+See Railway's [Dockerfile guide](https://docs.railway.com/builds/dockerfiles) and [subdirectory configuration](https://docs.railway.com/deployments/monorepo). This prepares the repository; it does not create or deploy a Railway service.
 
 ## Maintenance notes
 

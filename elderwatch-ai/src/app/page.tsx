@@ -76,15 +76,17 @@ export default function Dashboard() {
 
   const selectedResident = residents.find((r) => r.id === selectedResidentId) ?? residents[0];
 
-  // Request the webcam only while the live tab is active.
-  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(mainTab === "live-camera" && !isPaused);
-
-  // ── Safety monitoring ─────────────────────────────────────────────────────
-  const { signals, classification, timeline, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
-    landmarks,
+  const monitoringPaused = isPaused || mainTab !== "live-camera";
+  const { signals, classification, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     selectedResident,
     safeZone,
-    { isPaused: isPaused || mainTab !== "live-camera" || poseStatus !== "running", seizureDetectionEnabled }
+    { isPaused: monitoringPaused, seizureDetectionEnabled }
+  );
+
+  // Classify each frame directly so pose and monitoring state render together.
+  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(
+    !monitoringPaused,
+    processFrame
   );
 
   useEffect(() => {

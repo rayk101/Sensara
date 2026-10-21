@@ -43,14 +43,12 @@ interface MonitorState {
 }
 
 export function useResidentMonitor(
-  landmarks: PoseLandmark[] | null,
   resident: ResidentProfile | null,
   safeZone: SafeZone = DEFAULT_SAFE_ZONE,
   options: MonitorOptions = {}
 ) {
   const isPaused = options.isPaused ?? false;
   const seizureDetectionEnabled = options.seizureDetectionEnabled ?? false;
-  const wasPausedRef = useRef(false);
 
   // ── Time-tracking refs ───────────────────────────────────────────────────────
   const prevLandmarksRef = useRef<PoseLandmark[] | null>(null);
@@ -110,7 +108,16 @@ export function useResidentMonitor(
     } }));
   }, [resident?.id, resetTimers]);
 
-  useEffect(() => { resetTimers(); }, [options.isPaused, resetTimers]);
+  useEffect(() => {
+    resetTimers();
+    setState(prev => ({ ...prev,
+      signals: { ...prev.signals, visible: false, secondsStill: 0 },
+      classification: {
+        severity: "stable", eventType: "normal", confidence: 0,
+        reason: isPaused ? "Monitoring paused" : "Waiting for camera…",
+      },
+    }));
+  }, [isPaused, resetTimers]);
 
   const upsertEvent = useCallback((event: SafetyEvent) => {
     if (event.residentId !== residentIdRef.current) return;
@@ -134,26 +141,9 @@ export function useResidentMonitor(
     }
   }, [upsertEvent]);
 
-  const processFrame = useCallback(() => {
-    if (!resident) return;
-
-    // ── Paused: emit a one-shot "paused" classification, then skip ───────────
-    if (isPaused) {
-      if (!wasPausedRef.current) {
-        wasPausedRef.current = true;
-        setState((prev) => ({
-          ...prev,
-          classification: {
-            severity: "stable",
-            eventType: "normal",
-            reason: "Monitoring paused",
-            confidence: 0,
-          },
-        }));
-      }
-      return;
-    }
-    wasPausedRef.current = false;
+  // Invoked by the camera frame callback, never by a state-derived effect.
+  const processFrame = useCallback((landmarks: PoseLandmark[] | null) => {
+    if (!resident || isPaused) return;
 
     const now = Date.now();
 
@@ -303,12 +293,7 @@ export function useResidentMonitor(
     }
 
     setState(prev => ({ ...prev, signals, classification }));
-  }, [landmarks, resident, safeZone, saveEvent, resetTimers, isPaused, seizureDetectionEnabled]);
-
-  // Run processFrame whenever landmarks change
-  useEffect(() => {
-    processFrame();
-  }, [processFrame]);
+  }, [resident, safeZone, saveEvent, resetTimers, isPaused, seizureDetectionEnabled]);
 
   const refreshHistory = useCallback(async () => {
     if (!resident) return;
@@ -355,7 +340,7 @@ export function useResidentMonitor(
     setState(prev => ({ ...prev, classification: demoClassification }));
   }, [resident, saveEvent]);
 
-  return { ...state, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent };
+  return { ...state, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent };
 }
 
 // Only show persisted events in the actionable timeline so IDs match the API.

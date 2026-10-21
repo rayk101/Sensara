@@ -1,7 +1,9 @@
 .next
 node_modules
-.env.local
-.env*.local
+.env
+.env.*
+.aws
+.vercel
 npm-debug.log*
 .git
 .gitignore

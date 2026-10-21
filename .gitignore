@@ -1,1 +1,9 @@
 .DS_Store
+
+# Local credentials and hosting project links
+.env
+.env.*
+!.env.example
+!.env.*.example
+.aws/
+.vercel/
