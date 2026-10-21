@@ -1,4 +1,4 @@
-import { withAuth } from "@/lib/platform/auth";
+import { withAuth, requireAdmin } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { isPhotonConfigured, photonErrorMessage, sendPhotonMessage } from "@/lib/photon";
 
@@ -9,6 +9,7 @@ let sending = false;
 let lastSent = 0;
 
 async function POSTHandler() {
+  requireAdmin();
   if (!isPhotonConfigured()) {
     return NextResponse.json({ error: "Photon is not configured." }, { status: 503 });
   }

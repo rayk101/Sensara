@@ -3,10 +3,11 @@ import { getResidentById } from "../db/residents";
 import { createSafetyEvent } from "../db/events";
 import { getDb, getMongoClient, isMongoEnabled } from "../mongodb";
 import { EventType, ResidentStatus, type SafetyEvent, type SafetySignals } from "../types";
-import { RECOMMENDED_ACTIONS } from "../classifySafety";
+import { RECOMMENDED_ACTIONS, classifyResidentSafety } from "../classifySafety";
 import { ApiError, assertPatient, currentActor } from "./auth";
 import { getSession } from "./sessions";
 import { identifier, text, isoTime } from "./validation";
+import { getScriptedStatus, DEMO_SCENARIOS } from "../demoScenarios";
 import { getCaregivers, getSettings } from "./settings";
 import { getInMemoryStore } from "../mockData";
 import { memory } from "./store";
@@ -25,6 +26,15 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   assertPatient(residentId);
   const patient = await getResidentById(residentId);
   if (!patient || patient.active === false) throw new ApiError(404, "Active patient not found");
+  if (input.source === "multi_feed_demo") {
+    const scenario = DEMO_SCENARIOS.find(s => s.id === input.scenarioId && s.residentId === residentId);
+    if (!scenario || typeof input.videoTime !== "number" || !Number.isFinite(input.videoTime) || input.videoTime < 0 || input.videoTime > 3600) throw new ApiError(400, "Invalid demo scenario evidence");
+    input = { ...input, ...getScriptedStatus(scenario.id, input.videoTime) };
+  } else if ((input.source ?? "live_camera") === "live_camera") {
+    const signals = input.signals as SafetySignals | undefined;
+    if (!signals || typeof signals !== "object") throw new ApiError(400, "Camera evidence is required");
+    input = { ...input, ...classifyResidentSafety(signals, { seizureDetectionEnabled: false }) };
+  }
   if (!Object.values(ResidentStatus).includes(input.severity as never) || input.severity === "stable" ||
       !Object.values(EventType).includes(input.eventType as never) || input.eventType === "normal") throw new ApiError(400, "Invalid incident classification");
   if (typeof input.confidence !== "number" || !Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1) throw new ApiError(400, "Invalid confidence");
@@ -34,7 +44,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   if (sessionId) {
     const session = await getSession(sessionId);
     if (!session || session.residentId !== residentId || session.status !== "active" || Date.parse(session.lastSeenAt) < Date.now() - 90_000) throw new ApiError(409, "Monitoring session is not active for this patient");
-    if (source === "live_camera" && session.source !== "live_camera") throw new ApiError(400, "Monitoring source mismatch");
+    if ((source === "live_camera" && session.source !== "live_camera") || (source === "multi_feed_demo" && (session.source !== "multi_feed_demo" || session.deviceId !== input.scenarioId))) throw new ApiError(400, "Monitoring source mismatch");
   } else if (source === "live_camera" || source === "multi_feed_demo") throw new ApiError(400, "An active monitoring session is required");
   const signals = (input.signals ?? { isLyingDown: false, movementScore: 0, postureAngle: 0, secondsStill: 0, insideSafeZone: true, visible: false }) as SafetySignals;
   if (!signals || typeof signals !== "object" || ["isLyingDown", "insideSafeZone", "visible"].some(key => typeof (signals as unknown as Record<string, unknown>)[key] !== "boolean") || [signals.movementScore, signals.postureAngle, signals.secondsStill].some(n => typeof n !== "number" || !Number.isFinite(n) || n < 0)) throw new ApiError(400, "Invalid safety signals");

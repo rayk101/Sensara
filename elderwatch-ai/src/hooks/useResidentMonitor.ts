@@ -352,15 +352,16 @@ async function persistEvent(
   signals: SafetySignals,
   sessionId?: string | null
 ): Promise<SafetyEvent> {
-  const { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible } = signals;
   const response = await fetch("/api/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      source: classification.reason.startsWith("[Demo]") ? "manual" : "live_camera",
+      detectedAt: new Date().toISOString(),
       sessionId, idempotencyKey: `${sessionId}:${classification.eventType}:${classification.severity}`,
       residentId: resident.id, residentName: resident.name, room: resident.room,
       ...classification,
-      signals: { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible },
+      signals,
     }),
   });
   if (!response.ok) throw new Error("Could not save event");

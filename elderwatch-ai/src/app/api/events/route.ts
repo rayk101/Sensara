@@ -1,4 +1,4 @@
-import { withAuth } from "@/lib/platform/auth";
+import { withAuth, ApiError } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { getRecentEvents, getEventsByResident } from "@/lib/db/events";
 import { submitIncident } from "@/lib/platform/incidents";
@@ -25,6 +25,7 @@ async function GETHandler(req: Request) {
 async function POSTHandler(req: Request) {
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Expected a JSON object" }, { status: 400 });
+  if (body.source === "audio_monitor") throw new ApiError(400, "Submit audio through the audio analysis endpoint");
   const event = await submitIncident(body);
   return NextResponse.json(event, { status: 201 });
 }

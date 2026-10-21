@@ -4,41 +4,8 @@ import { useState, useCallback } from "react";
 import DemoVideoTile, { type DemoFeedConfig, type DemoFeedStatus } from "./DemoVideoTile";
 import FacilityAlertPanel, { type FeedAlert } from "./FacilityAlertPanel";
 
-const DEMO_FEEDS: DemoFeedConfig[] = [
-  {
-    id: "feed1",
-    room: "Room 204",
-    resident: "Eleanor Brooks",
-    residentId: "resident_001",
-    risk: "High fall risk",
-    videoFile: "fall-demo.mp4",
-  },
-  {
-    id: "feed2",
-    room: "Room 118",
-    resident: "Robert Hayes",
-    residentId: "resident_002",
-    risk: "Post-surgery mobility",
-    videoFile: "stable-demo.mp4",
-  },
-  {
-    id: "feed3",
-    room: "Room 312",
-    resident: "Margaret Chen",
-    residentId: "resident_003",
-    risk: "Wandering / Memory care",
-    videoFile: "wandering-demo.mp4",
-  },
-  {
-    id: "feed4",
-    room: "Lounge Area",
-    resident: "Daniel Price",
-    residentId: "demo_resident_004",
-    risk: "Medium risk",
-    videoFile: "choking-demo.mp4",
-  },
-];
-
+import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
+import type { ResidentProfile } from "@/lib/types";
 interface FeedState extends DemoFeedStatus {
   alertSince: number;
 }
@@ -51,7 +18,11 @@ const defaultFeedState: FeedState = {
   alertSince: 0,
 };
 
-export default function MultiFeedDemo({ isPaused = false }: { isPaused?: boolean }) {
+export default function MultiFeedDemo({ isPaused = false, residents }: { isPaused?: boolean; residents: ResidentProfile[] }) {
+  const DEMO_FEEDS: DemoFeedConfig[] = DEMO_SCENARIOS.flatMap(scenario => {
+    const patient = residents.find(r => r.id === scenario.residentId && r.active !== false);
+    return patient ? [{ ...scenario, resident: patient.name, room: patient.room }] : [];
+  });
   const [feedStates, setFeedStates] = useState<Record<string, FeedState>>({});
 
   const handleStatusChange = useCallback((feedId: string, status: DemoFeedStatus) => {
@@ -90,7 +61,9 @@ export default function MultiFeedDemo({ isPaused = false }: { isPaused?: boolean
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        source: "multi_feed_demo",
+        source: "manual",
+        sourceEventId: `panel:${alert.feedId}:${alert.alertSince}`,
+        detectedAt: new Date().toISOString(),
         residentId: alert.residentId,
         residentName: alert.resident,
         room: alert.room,
@@ -111,6 +84,7 @@ export default function MultiFeedDemo({ isPaused = false }: { isPaused?: boolean
 
   return (
     <div className="flex flex-col gap-5">
+      {DEMO_FEEDS.length < 4 && <p role="alert" className="text-sm text-amber-800">Some scenario patients are unavailable or not assigned to this account.</p>}
       {/* Main layout: 2×2 grid + alert panel */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-5 items-start">
         {/* 2×2 video grid */}

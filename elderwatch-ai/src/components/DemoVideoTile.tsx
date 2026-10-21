@@ -1,6 +1,10 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
+import { getScriptedStatus } from "@/lib/demoScenarios";
+import { useMonitoringSession } from "@/hooks/useMonitoringSession";
+import { useVideoRecorder } from "@/hooks/useVideoRecorder";
+import type { SafetyEvent } from "@/lib/types";
 import SafetyBadge from "./SafetyBadge";
 
 export interface DemoFeedConfig {
@@ -51,26 +55,11 @@ const SEVERITY_HEADER_BG: Record<string, string> = {
   urgent: "bg-red-900/90",
 };
 
-function getScriptedStatus(feedId: string, currentTime: number): DemoFeedStatus {
-  switch (feedId) {
-    case "feed1": // fall-demo.mp4
-      if (currentTime < 5) return { severity: "stable", eventType: "normal", reason: "No concerning activity detected", confidence: 0.95 };
-      if (currentTime < 10) return { severity: "watch", eventType: "unsafe_posture", reason: "Resident posture is worth monitoring", confidence: 0.72 };
-      return { severity: "urgent", eventType: "possible_fall", reason: "Resident appears to be lying down with minimal movement — caregiver should check", confidence: 0.90 };
-    case "feed2": // stable-demo.mp4
-      return { severity: "stable", eventType: "normal", reason: "No concerning activity detected", confidence: 0.95 };
-    case "feed3": // wandering-demo.mp4
-      if (currentTime < 13) return { severity: "stable", eventType: "normal", reason: "No concerning activity detected", confidence: 0.95 };
-      return { severity: "watch", eventType: "wandering", reason: "Resident's torso center has been outside the designated safe area", confidence: 0.78 };
-    case "feed4": // choking-demo.mp4
-      if (currentTime < 4) return { severity: "stable", eventType: "normal", reason: "No concerning activity detected", confidence: 0.95 };
-      return { severity: "urgent", eventType: "possible_choking", reason: "Possible choking gesture detected — caregiver should check immediately", confidence: 0.82 };
-    default:
-      return { severity: "stable", eventType: "normal", reason: "No concerning activity detected", confidence: 0.95 };
-  }
-}
-
 export default function DemoVideoTile({ config, onStatusChange, isPaused = false }: DemoVideoTileProps) {
+  const { sessionId, sessionError } = useMonitoringSession(config.residentId, !isPaused, "multi_feed_demo", config.id);
+  const [capturedStream, setCapturedStream] = useState<MediaStream | null>(null);
+  const [savedEvent, setSavedEvent] = useState<SafetyEvent | null>(null);
+  const handled = useRef(new Set<string>());
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentStatus, setCurrentStatus] = useState<DemoFeedStatus>({
     severity: "stable",
@@ -82,6 +71,15 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
+  const recording = useVideoRecorder(capturedStream, savedEvent, null, isPaused, setSavedEvent);
+  useEffect(() => {
+    const video = videoRef.current as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null;
+    if (isPaused || !video || !sessionId) { setCapturedStream(null); return; }
+    let stream: MediaStream | undefined;
+    const capture = () => { if (video.captureStream) { stream = video.captureStream(); setCapturedStream(stream); } };
+    if (video.readyState >= 2) capture(); else video.addEventListener("loadeddata", capture, { once: true });
+    return () => { video.removeEventListener("loadeddata", capture); stream?.getTracks().forEach(t => t.stop()); setCapturedStream(null); };
+  }, [isPaused, sessionId]);
   const onStatusChangeRef = useRef(onStatusChange);
   useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
 
@@ -116,36 +114,26 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
   }, [config.id]);
 
   const handleSaveDemoEvent = useCallback(async () => {
-    if (currentStatus.severity === "stable") {
-      setSaveMsg("No active alert");
-      setTimeout(() => setSaveMsg(null), 2500);
-      return;
-    }
+    if (currentStatus.severity === "stable" || !sessionId) return;
     setIsSaving(true);
     try {
-      const res = await fetch("/api/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: "multi_feed_demo",
-          residentId: config.residentId,
-          residentName: config.resident,
-          room: config.room,
-          severity: currentStatus.severity,
-          eventType: currentStatus.eventType,
-          confidence: currentStatus.confidence,
-          reason: currentStatus.reason,
-          acknowledged: false,
-        }),
-      });
-      setSaveMsg(res.ok ? "Saved" : "Failed");
-    } catch {
-      setSaveMsg("Failed");
-    } finally {
-      setIsSaving(false);
-      setTimeout(() => setSaveMsg(null), 3000);
-    }
-  }, [config, currentStatus]);
+      const res = await fetch("/api/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        source: "multi_feed_demo", sessionId, sourceEventId: `${sessionId}:${currentStatus.eventType}:${currentStatus.severity}`,
+        detectedAt: new Date().toISOString(), scenarioId: config.id, videoTime: videoRef.current?.currentTime ?? 0,
+        residentId: config.residentId, ...currentStatus,
+      }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not save incident");
+      setSavedEvent(data); setSaveMsg("Saved");
+    } catch (e) { setSaveMsg(e instanceof Error ? e.message : "Save failed"); }
+    finally { setIsSaving(false); }
+  }, [config.id, config.residentId, currentStatus, sessionId]);
+  useEffect(() => {
+    if (isPaused || !sessionId || currentStatus.severity === "stable") return;
+    const key = `${sessionId}:${currentStatus.eventType}:${currentStatus.severity}`;
+    if (handled.current.has(key)) return;
+    handled.current.add(key); void handleSaveDemoEvent();
+  }, [isPaused, sessionId, currentStatus.severity, currentStatus.eventType, handleSaveDemoEvent]);
 
   const urgentColor = "#ef4444";
   const watchColor = "#eab308";
@@ -154,6 +142,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
 
   return (
     <div className={`rounded-xl overflow-hidden border-2 transition-all duration-500 ${SEVERITY_BORDER[currentStatus.severity]}`}>
+      {(sessionError || recording.statusMessage) && <p role="status" className="bg-amber-50 px-3 py-2 text-xs">{sessionError || recording.statusMessage}</p>}
       {/* Tile header */}
       <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${SEVERITY_HEADER_BG[currentStatus.severity]}`}>
         <div className="flex-1 min-w-0">

@@ -7,7 +7,9 @@ import { MOCK_RESIDENTS } from "@/lib/mockData";
 import { DEFAULT_SAFE_ZONE, clampSafeZone, DETECTION_THRESHOLDS } from "@/lib/poseHelpers";
 import { usePoseDetection } from "@/hooks/usePoseDetection";
 import { useResidentMonitor } from "@/hooks/useResidentMonitor";
-import { useAlerts } from "@/hooks/useAlerts";
+import { useMonitoringSession } from "@/hooks/useMonitoringSession";
+import IncidentCenter from "@/components/IncidentCenter";
+import SignIn from "@/components/SignIn";
 import { useVideoRecorder } from "@/hooks/useVideoRecorder";
 import ResidentCard from "@/components/ResidentCard";
 import EventTimeline from "@/components/EventTimeline";
@@ -48,7 +50,7 @@ function saveSafeZone(z: SafeZone) {
 type MainTab = "multi-feed" | "live-camera";
 
 export default function Dashboard() {
-  const [residents, setResidents] = useState<ResidentProfile[]>(MOCK_RESIDENTS);
+  const [residents, setResidents] = useState<ResidentProfile[]>([]);
   const [selectedResidentId, setSelectedResidentId] = useState<string>(MOCK_RESIDENTS[0].id);
   const [mongoConnected, setMongoConnected] = useState(false);
   const [emailConfigured, setEmailConfigured] = useState(false);
@@ -56,7 +58,12 @@ export default function Dashboard() {
   const [photonTestStatus, setPhotonTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [photonError, setPhotonError] = useState("");
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [isPaused, setIsPaused] = useState(false);
+  const [isPaused, setIsPaused] = useState(true);
+  const [monitoringConsent, setMonitoringConsent] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [patientError, setPatientError] = useState("");
+  const [cameraId, setCameraId] = useState("");
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const seizureDetectionEnabled = false;
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
@@ -79,17 +86,20 @@ export default function Dashboard() {
 
   const selectedResident = residents.find((r) => r.id === selectedResidentId) ?? residents[0];
 
-  const monitoringPaused = isPaused || mainTab !== "live-camera";
+  const monitoringRequested = !isPaused && monitoringConsent && mainTab === "live-camera";
+  const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera");
+  const monitoringPaused = !monitoringRequested || !sessionId;
+  useEffect(() => { setIsPaused(true); setMonitoringConsent(false); }, [selectedResident?.id, mainTab]);
   const { signals, classification, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
-    selectedResident,
+    selectedResident ?? null,
     safeZone,
-    { isPaused: monitoringPaused, seizureDetectionEnabled }
+    { isPaused: monitoringPaused, seizureDetectionEnabled, sessionId }
   );
 
   // Classify each frame directly so pose and monitoring state render together.
   const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(
-    !monitoringPaused,
-    processFrame
+    monitoringRequested,
+    processFrame, cameraId, selectedResident?.id
   );
 
   useEffect(() => {
@@ -97,14 +107,17 @@ export default function Dashboard() {
   }, [mainTab, refreshHistory]);
 
   // ── TTS + visual alerts ───────────────────────────────────────────────────
-  useAlerts(isPaused || mainTab !== "live-camera" ? null : classification, selectedResident);
+  useEffect(() => {
+    if (!stream) return;
+    void navigator.mediaDevices.enumerateDevices().then(devices => setCameras(devices.filter(d => d.kind === "videoinput"))).catch(() => {});
+  }, [stream]);
 
   // ── Critical event video recording (shared function for all triggers) ─────
   const { recordingStatus, statusMessage: recordingMessage } = useVideoRecorder(
     stream,
     latestEvent,
     micStream,
-    isPaused || mainTab !== "live-camera",
+    monitoringPaused,
     upsertEvent
   );
 
@@ -142,14 +155,14 @@ export default function Dashboard() {
   // ── Check service status on mount ─────────────────────────────────────────
   useEffect(() => {
     fetch("/api/residents")
-      .then((r) => r.json())
+      .then(async (r) => { if (r.status === 401) setAuthRequired(true); if (!r.ok) throw new Error("Patient records could not be loaded"); return r.json(); })
       .then((d) => {
         if (Array.isArray(d.residents) && d.residents.length) {
-          setResidents(d.residents);
+          setResidents(d.residents.filter((r: ResidentProfile) => r.active !== false));
           setSelectedResidentId(id => d.residents.some((resident: ResidentProfile) => resident.id === id) ? id : d.residents[0].id);
         }
       })
-      .catch(() => setMongoConnected(false));
+      .catch(() => { setMongoConnected(false); setPatientError("Patient records are unavailable. Check your connection or sign in."); });
 
     fetch("/api/status")
       .then((r) => r.json())
@@ -195,6 +208,8 @@ export default function Dashboard() {
     urgent: "shadow-red-500/40 shadow-2xl",
   };
 
+  if (authRequired) return <SignIn />;
+  if (!selectedResident) return <main className="p-8" role="status">{patientError || "Loading authorized patient records…"}</main>;
   return (
     <div className="min-h-screen bg-sensara-cream text-sensara-forest-900 flex flex-col">
 
@@ -243,6 +258,7 @@ export default function Dashboard() {
             )}
             <button
               onClick={() => setIsPaused((p) => !p)}
+              disabled={!monitoringConsent}
               className={`text-xs rounded-lg px-3 py-1.5 transition-colors border font-medium ${
                 isPaused
                   ? "bg-sensara-forest-600 hover:bg-sensara-forest-500 text-white border-sensara-forest-500"
@@ -273,8 +289,12 @@ export default function Dashboard() {
 
       {/* ── Tab content ───────────────────────────────────────────────────── */}
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-5">
+        <label className="mb-3 block text-sm"><input type="checkbox" checked={monitoringConsent} onChange={e => { setMonitoringConsent(e.target.checked); if (!e.target.checked) setIsPaused(true); }} /> I authorize {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "these four fictional demo scenarios"}, 15-second incident recordings, and configured alerts.</label>
+        {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError}</p>}
+        {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => { setIsPaused(true); setCameraId(e.target.value); }}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
+        <IncidentCenter />
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
-          <span>Photon iMessage: {photonConfigured ? "Configured · urgent demo alerts enabled" : "Not configured"}</span>
+          <span>Photon iMessage: {photonConfigured ? "Configured · check delivery outcomes below" : "Not configured"}</span>
           {photonConfigured && (
             <button
               onClick={handleSendTestPhoton}
@@ -291,7 +311,7 @@ export default function Dashboard() {
 
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>
-          <MultiFeedDemo isPaused={isPaused || mainTab !== "multi-feed"} />
+          <MultiFeedDemo residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
         </div>
 
         {/* ── TAB 2: Live Camera Demo ─────────────────────────────────────── */}
@@ -432,6 +452,7 @@ export default function Dashboard() {
                   <AnalyticsCard mongoConnected={mongoConnected} refreshTrigger={analyticsRefreshKey} />
                   <AIAssistant key={selectedResident.id} resident={selectedResident} classification={classification} />
                   <AudioMonitor
+                    sessionId={sessionId}
                     resident={selectedResident}
                     isPaused={isPaused || mainTab !== "live-camera"}
                     onEventSaved={upsertEvent}

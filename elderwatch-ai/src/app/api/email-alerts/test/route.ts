@@ -1,4 +1,4 @@
-import { withAuth } from "@/lib/platform/auth";
+import { withAuth, requireAdmin } from "@/lib/platform/auth";
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { isEmailAlertsConfigured } from "@/lib/emailAlerts";
@@ -6,6 +6,7 @@ import { isEmailAlertsConfigured } from "@/lib/emailAlerts";
 // POST /api/email-alerts/test
 // Sends a test email to the configured caregiver address.
 async function POSTHandler() {
+  requireAdmin();
   if (!isEmailAlertsConfigured()) {
     return NextResponse.json(
       { error: "Email alerts not configured. Set RESEND_API_KEY, CAREGIVER_EMAIL, and ALERT_FROM_EMAIL." },

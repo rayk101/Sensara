@@ -30,6 +30,7 @@ interface AudioClassification {
 
 export interface AudioMonitorProps {
   resident: ResidentProfile | null;
+  sessionId?: string | null;
   isPaused?: boolean;
   onEventSaved?: (event: SafetyEvent) => void;
   /** Exposes mic stream so video recorder can blend audio into clips */
@@ -40,6 +41,7 @@ const CHUNK_DURATION_MS = 6000; // 6-second analysis windows
 
 export default function AudioMonitor({
   resident,
+  sessionId,
   isPaused = false,
   onEventSaved,
   onMicStream,
@@ -57,6 +59,8 @@ export default function AudioMonitor({
   const chunkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
 
+  const sessionRef = useRef(sessionId);
+  useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
   const residentRef = useRef(resident);
   const isPausedRef = useRef(isPaused);
   const onEventRef = useRef(onEventSaved);
@@ -97,6 +101,8 @@ export default function AudioMonitor({
       form.append("residentId", currentResident.id);
       form.append("residentName", currentResident.name);
       form.append("room", currentResident.room);
+      if (sessionRef.current) form.append("sessionId", sessionRef.current);
+      form.append("idempotencyKey", `${sessionRef.current}:audio:${Date.now()}`);
 
       const res = await fetch("/api/audio/analyze", { method: "POST", body: form });
       const data = await res.json();
@@ -244,6 +250,7 @@ export default function AudioMonitor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           simulate: true,
+          sessionId: sessionRef.current, idempotencyKey: crypto.randomUUID(),
           residentId: currentResident.id,
           residentName: currentResident.name,
           room: currentResident.room,

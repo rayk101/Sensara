@@ -20,7 +20,9 @@ const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmark
 
 export function usePoseDetection(
   enabled = true,
-  onFrame?: (landmarks: PoseLandmark[] | null) => void
+  onFrame?: (landmarks: PoseLandmark[] | null) => void,
+  deviceId?: string,
+  patientId?: string
 ): PoseDetectionResult {
   const onFrameRef = useRef(onFrame);
   useEffect(() => { onFrameRef.current = onFrame; }, [onFrame]);
@@ -59,7 +61,7 @@ export function usePoseDetection(
       setStatus("loading");
       try {
         camera = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" }, audio: false,
+          video: { width: 640, height: 480, ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }) }, audio: false,
         });
       } catch {
         if (!cancelled) {
@@ -69,6 +71,10 @@ export function usePoseDetection(
         return;
       }
       if (cancelled || !video) { release(); return; }
+      camera.getVideoTracks().forEach(track => track.addEventListener("ended", () => {
+        if (cancelled) return;
+        release(); setStream(null); setLandmarks(null); setStatus("error"); setErrorMessage("Camera disconnected. Monitoring is unavailable; existing incidents remain active.");
+      }, { once: true }));
       try {
         video.srcObject = camera;
         await video.play();
@@ -129,7 +135,7 @@ export function usePoseDetection(
     }
     void init();
     return () => { cancelled = true; release(); };
-  }, [enabled]);
+  }, [enabled, deviceId, patientId]);
 
   return { landmarks, videoRef, canvasRef, status, errorMessage, stream };
 }

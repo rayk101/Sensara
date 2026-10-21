@@ -6,6 +6,8 @@ import type { SafetyEvent } from "@/lib/types";
 
 interface EventTimelineProps {
   events: SafetyEvent[];
+  onResolve?: (eventId: string, reason: string) => Promise<void>;
+  onDismiss?: (eventId: string, reason: string) => Promise<void>;
   onAcknowledge: (eventId: string) => Promise<void>;
   onAddNote: (eventId: string, residentId: string, note: string) => Promise<void>;
 }
@@ -134,7 +136,7 @@ function VideoClipModal({
   );
 }
 
-export default function EventTimeline({ events, onAcknowledge, onAddNote }: EventTimelineProps) {
+export default function EventTimeline({ events, onAcknowledge, onAddNote, onResolve, onDismiss }: EventTimelineProps) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -237,6 +239,11 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote }: Even
                     </button>
                   )}
 
+                  <p className="text-xs">Response: {event.status ?? (event.acknowledged ? "acknowledged" : "open")}</p>
+                  {!["resolved", "dismissed"].includes(event.status ?? "") && <div className="flex gap-2">
+                    {event.acknowledged && onResolve && <button className="rounded border px-2 py-1 text-xs" onClick={async () => { const reason = window.prompt("Reason for resolving this incident:"); if (!reason) return; try { await onResolve(event._id!, reason); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Resolution failed"); } }}>Resolve</button>}
+                    {onDismiss && <button className="rounded border px-2 py-1 text-xs" onClick={async () => { const reason = window.prompt("Reason for dismissing this incident:"); if (!reason) return; try { await onDismiss(event._id!, reason); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Dismissal failed"); } }}>Dismiss</button>}
+                  </div>}
                   {/* Acknowledge button */}
                   {isNonStable && !event.acknowledged && event._id && (
                     <button

@@ -1,3 +1,4 @@
+import { getResidentById } from "@/lib/db/residents";
 import { withAuth } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,7 @@ async function POSTHandler(req: Request) {
       if (!(audioFile instanceof File) || audioFile.size > 10 * 1024 * 1024 || !/^(audio|video)\//.test(audioFile.type)) return NextResponse.json({ error: "Invalid audio file (maximum 10 MB)" }, { status: 400 });
       sessionId = form.get("sessionId") as string | null;
       requestId = form.get("idempotencyKey") as string | null;
+      if (!await getResidentById(residentId)) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
       const buffer = Buffer.from(await audioFile.arrayBuffer());
       const result = await transcribeAudioWithElevenLabs(buffer, audioFile.type || "audio/webm");
       transcript = result.transcript;
