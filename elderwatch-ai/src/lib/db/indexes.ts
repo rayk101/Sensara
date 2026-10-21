@@ -6,6 +6,9 @@ export async function ensureIndexes(): Promise<void> {
   const db = await getDb();
 
   await Promise.all([
+    db.collection("event_ingestions").createIndex({ id: 1 }, { unique: true }),
+    db.collection("monitoring_observations").createIndex({ id: 1 }, { unique: true }),
+    db.collection("safety_events").createIndex({ activeEpisodeKey: 1 }, { unique: true, partialFilterExpression: { activeEpisodeKey: { $type: "string" } } }),
     db.collection("safety_events").createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: "string" } } }),
     db.collection("safety_events").createIndex({ notificationsQueued: 1, createdAt: 1 }),
     db.collection("safety_events").createIndex({ status: 1, residentId: 1 }),

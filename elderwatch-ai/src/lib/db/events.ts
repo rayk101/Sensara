@@ -59,17 +59,18 @@ export async function getEventsByResident(
 export async function acknowledgeEvent(id: string, acknowledgedBy: string): Promise<SafetyEvent | null> {
   return transitionIncident(id, "acknowledged", acknowledgedBy);
 }
-export async function transitionIncident(id: string, status: "acknowledged" | "resolved", by = currentActor().name): Promise<SafetyEvent | null> {
+export async function transitionIncident(id: string, status: "acknowledged" | "resolved" | "dismissed", by = currentActor().name, reason?: string): Promise<SafetyEvent | null> {
   const event = await getSafetyEvent(id);
   if (!event) return null;
-  if (event.status === status) return event;
-  if (event.status === "resolved" || (status === "resolved" && !event.acknowledged)) throw new ApiError(409, "Acknowledge the incident before resolving it; resolved incidents cannot reopen");
+  if (status !== "acknowledged" && (!reason?.trim() || reason.length > 2000)) throw new ApiError(400, "A resolution or dismissal reason is required");
+  if (event.status === status || (status === "acknowledged" && event.acknowledged)) return event;
+  if (["resolved", "dismissed"].includes(event.status ?? "") || (status === "resolved" && !event.acknowledged)) throw new ApiError(409, "Acknowledge the incident before resolving it; resolved incidents cannot reopen");
   const now = new Date().toISOString();
   const update = status === "acknowledged" ? { status, acknowledged: true, acknowledgedAt: now, acknowledgedBy: by } : { status, resolvedAt: now };
-  const entry = { status, at: now, by };
-  if (!isMongoEnabled()) { Object.assign(event, update); (event.stateHistory ??= []).push(entry); return event; }
-  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, status: event.status ?? { $exists: false } };
-  const result = await (await getDb()).collection<SafetyEvent>(COLLECTION).findOneAndUpdate(filter as object, { $set: update, $push: { stateHistory: entry } }, { returnDocument: "after" });
+  const entry = { status, at: now, by, ...(reason ? { reason: reason.trim() } : {}) };
+  if (!isMongoEnabled()) { Object.assign(event, update); event.version = (event.version ?? 0) + 1; if (status !== "acknowledged") delete event.activeEpisodeKey; (event.stateHistory ??= []).push(entry); return event; }
+  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, status: event.status ?? { $exists: false }, version: event.version ?? { $exists: false } };
+  const result = await (await getDb()).collection<SafetyEvent>(COLLECTION).findOneAndUpdate(filter as object, { $set: update, $inc: { version: 1 }, ...(status !== "acknowledged" ? { $unset: { activeEpisodeKey: "" } } : {}), $push: { stateHistory: entry } }, { returnDocument: "after" });
   return (result ?? await getSafetyEvent(id)) as unknown as SafetyEvent;
 }
 

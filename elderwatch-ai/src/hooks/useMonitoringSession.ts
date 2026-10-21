@@ -30,5 +30,5 @@ export function useMonitoringSession(residentId: string | undefined, enabled: bo
     window.addEventListener("pagehide", stop);
     return () => { disposed = true; clearInterval(heartbeat); window.removeEventListener("pagehide", stop); stop(); };
   }, [residentId, enabled, source, deviceId]);
-  return { sessionId: enabled && session?.residentId === residentId ? session.id : null, sessionError: error };
+  return { sessionId: enabled && session && session.residentId === residentId ? session.id : null, sessionError: error };
 }

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getDb, isMongoEnabled } from "../mongodb";
 import { getSafetyEvent } from "../db/events";
 import { getResidentById } from "../db/residents";
@@ -12,7 +12,7 @@ export interface NotificationRecord {
   id: string; eventId: string; residentId: string; staffId: string; channel: Caregiver["channel"];
   provider: string; status: "queued" | "submitted" | "accepted" | "delivered" | "failed" | "unknown" | "cancelled";
   providerMessageId: string | null; retryCount: number; createdAt: string; lastAttemptAt: string | null;
-  nextAttemptAt: string; leaseUntil?: string | null; error: string | null;
+  nextAttemptAt: string; leaseUntil?: string | null; leaseOwner?: string; error: string | null;
 }
 export function notificationText(event: SafetyEvent, details: boolean) {
   if (!details) return "Urgent patient safety incident detected. Open the secure Sensara dashboard for details.";
@@ -21,7 +21,7 @@ export function notificationText(event: SafetyEvent, details: boolean) {
 export async function enqueueNotifications(event: SafetyEvent) {
   if (!event._id) return;
   const settings = await getSettings();
-  const recipients = event.severity === "urgent" && settings.notificationsEnabled ? (await getCaregivers()).filter(r => r.active && r.urgentAlerts && r.patientIds.includes(event.residentId)) : [];
+  const recipients = event.severity === "urgent" && settings.notificationsEnabled ? (await getCaregivers()).filter(r => r.active && r.urgentAlerts && r.patientIds.includes(event.residentId) && (event.workflow?.messaging.recipientIds.includes(r.id) ?? true)) : [];
   for (const r of recipients) {
     const id = createHash("sha256").update(`${event._id}:${r.id}:${r.channel}`).digest("hex");
     const record: NotificationRecord = { id, eventId: String(event._id), residentId: event.residentId, staffId: r.id,
@@ -78,22 +78,23 @@ export async function processNotifications(send = deliverNotification) {
   const pending = !isMongoEnabled() ? getInMemoryStore().getRecentEvents(100000).filter(e => e.notificationsQueued === false) : await (await getDb()).collection("safety_events").find({ notificationsQueued: false }).limit(100).toArray() as unknown as SafetyEvent[];
   for (const event of pending) await enqueueNotifications(event);
   const now = new Date().toISOString();
+  const leaseOwner = randomUUID();
   const lease = new Date(Date.now() + 60_000).toISOString();
   if (isMongoEnabled()) await (await getDb()).collection("notifications").updateMany({ status: "submitted", leaseUntil: { $lt: now } }, { $set: { status: "unknown", error: "Worker interrupted after submission; inspect provider before retrying" } });
   let record: NotificationRecord | null = null;
   if (!isMongoEnabled()) {
     record = [...memory("notifications").values()].find(n => n.status === "queued" && n.nextAttemptAt <= now) as NotificationRecord ?? null;
-    if (record) Object.assign(record, { status: "submitted", lastAttemptAt: now, leaseUntil: lease, retryCount: record.retryCount + 1 });
+    if (record) Object.assign(record, { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner, retryCount: record.retryCount + 1 });
   } else record = await (await getDb()).collection<NotificationRecord>("notifications").findOneAndUpdate(
-    { status: "queued", nextAttemptAt: { $lte: now } }, { $set: { status: "submitted", lastAttemptAt: now, leaseUntil: lease }, $inc: { retryCount: 1 } }, { returnDocument: "after", sort: { createdAt: 1 } });
+    { status: "queued", nextAttemptAt: { $lte: now } }, { $set: { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner }, $inc: { retryCount: 1 } }, { returnDocument: "after", sort: { createdAt: 1 } });
   if (!record) return;
   let update: Partial<NotificationRecord>;
   try { update = { status: "accepted", providerMessageId: await send(record), error: null, leaseUntil: null }; }
   catch (error) {
     const failure = failurePolicy(error);
     update = { status: error instanceof ApiError && error.status === 409 ? "cancelled" : failure.uncertain ? "unknown" : failure.retry && record.retryCount < 4 ? "queued" : "failed",
-      nextAttemptAt: new Date(Date.now() + retryDelay(record.retryCount)).toISOString(), error: failure.message, leaseUntil: null };
+      nextAttemptAt: new Date(Date.now() + retryDelay(record.retryCount) + Math.floor(Math.random() * 1000)).toISOString(), error: failure.message, leaseUntil: null };
   }
   if (!isMongoEnabled()) Object.assign(record, update);
-  else await (await getDb()).collection("notifications").updateOne({ id: record.id, status: "submitted" }, { $set: update });
+  else await (await getDb()).collection("notifications").updateOne({ id: record.id, status: "submitted", leaseOwner }, { $set: update });
 }

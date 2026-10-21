@@ -81,10 +81,23 @@ export interface SafetyEvent {
   _id?: string;
   idempotencyKey?: string;
   sessionId?: string | null;
-  status?: "open" | "acknowledged" | "resolved";
+  status?: "open" | "acknowledged" | "resolved" | "dismissed";
+  version?: number;
+  sourceEventId?: string;
+  episodeId?: string;
+  activeEpisodeKey?: string;
+  correlationId?: string;
+  detectedAt?: string;
+  firstUrgentAt?: string | null;
+  workflow?: {
+    video: { status: string; error?: string; updatedAt: string };
+    voice: { status: string; error?: string; updatedAt: string };
+    messaging: { status: string; recipientIds: string[]; error?: string; updatedAt: string };
+    dashboard: { status: string; updatedAt: string };
+  };
   initialStatus?: "open";
   resolvedAt?: string | null;
-  stateHistory?: Array<{ status: string; at: string; by: string }>;
+  stateHistory?: Array<{ status: string; at: string; by: string; reason?: string }>;
   notificationsQueued?: boolean;
   residentId: string;
   residentName: string;
