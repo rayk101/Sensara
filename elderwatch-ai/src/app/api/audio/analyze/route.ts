@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import {
   isElevenLabsConfigured,
@@ -69,7 +71,7 @@ export async function POST(req: Request) {
     }
 
     // Persist event for watch/assist/urgent classifications
-    let eventId: string | undefined;
+    let savedEvent: SafetyEvent | undefined;
     if (classification.severity !== "stable") {
       const signals = {
         isLyingDown: false,
@@ -97,7 +99,7 @@ export async function POST(req: Request) {
         createdAt: new Date().toISOString(),
       };
       const saved = await createSafetyEvent(event);
-      eventId = saved._id;
+      savedEvent = saved;
 
       if (saved.severity === "urgent") {
         sendUrgentEmailAlert(saved as SafetyEvent).catch(() => {});
@@ -110,7 +112,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       classification,
       transcript,
-      eventId,
+      eventId: savedEvent?._id,
+      event: savedEvent,
       shouldRecordCriticalClip,
       elevenLabsEnabled: isElevenLabsConfigured(),
       isSimulation,

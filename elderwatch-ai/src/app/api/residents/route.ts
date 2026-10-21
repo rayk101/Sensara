@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { getResidents } from "@/lib/db/residents";
 import { isMongoEnabled } from "@/lib/mongodb";

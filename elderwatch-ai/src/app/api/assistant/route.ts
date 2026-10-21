@@ -168,6 +168,7 @@ Caregiver question: ${question}`;
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: AbortSignal.timeout(20_000),
     headers: {
       "Content-Type": "application/json",
       "x-api-key": process.env.ANTHROPIC_API_KEY!,
@@ -191,15 +192,17 @@ export async function POST(req: Request) {
     const body: AssistantRequest = await req.json();
     const { question, resident, classification } = body;
 
-    if (!question || !classification) {
+    if (typeof question !== "string" || !question.trim() || !classification || typeof classification.eventType !== "string" || !resident) {
       return NextResponse.json({ error: "Missing question or classification" }, { status: 400 });
     }
 
     let guidance: string;
+    let generatedBy = "mock";
 
     if (process.env.ANTHROPIC_API_KEY) {
       try {
         guidance = await callClaudeAPI(question, resident, classification);
+        generatedBy = "claude";
       } catch (apiErr) {
         console.warn("Claude API call failed, using mock:", apiErr);
         guidance = getMockGuidance(classification.eventType, question);
@@ -212,7 +215,7 @@ export async function POST(req: Request) {
       guidance,
       disclaimer:
         "This guidance is general information only and does not constitute medical advice. Always follow your facility's protocols and involve medical staff when appropriate.",
-      generatedBy: process.env.ANTHROPIC_API_KEY ? "claude" : "mock",
+      generatedBy,
     });
   } catch (err) {
     console.error("POST /api/assistant error:", err);

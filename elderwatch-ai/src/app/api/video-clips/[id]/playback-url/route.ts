@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { getVideoClipById } from "@/lib/db/videoClips";
 import { isS3Configured, createPresignedDownloadUrl } from "@/lib/s3";
@@ -8,10 +10,11 @@ import { isS3Configured, createPresignedDownloadUrl } from "@/lib/s3";
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
-    const clip = await getVideoClipById(params.id);
+    const clip = await getVideoClipById(id);
     if (!clip) {
       return NextResponse.json({ error: "Clip not found" }, { status: 404 });
     }

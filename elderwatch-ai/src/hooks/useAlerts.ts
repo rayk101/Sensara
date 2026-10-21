@@ -18,7 +18,10 @@ export function useAlerts(
   const prevSeverityRef = useRef<ResidentStatusValue | null>(null);
 
   useEffect(() => {
-    if (!classification || !resident) return;
+    if (!classification || !resident) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      return;
+    }
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
 
     const { severity, eventType, reason } = classification;
@@ -30,13 +33,13 @@ export function useAlerts(
     }
 
     const now = Date.now();
-    const key = `${eventType}`;
+    const key = `${resident.id}:${eventType}`;
     const lastTime = lastTTSRef.current[key] ?? 0;
 
     const severityChanged = prevSeverityRef.current !== severity;
     const debouncePassed = now - lastTime > TTS_DEBOUNCE_MS;
 
-    if (severityChanged || debouncePassed) {
+    if (debouncePassed && (severityChanged || !lastTime)) {
       lastTTSRef.current[key] = now;
       prevSeverityRef.current = severity;
 
@@ -51,5 +54,5 @@ export function useAlerts(
       utterance.volume = 1;
       window.speechSynthesis.speak(utterance);
     }
-  }, [classification?.severity, classification?.eventType, resident?.id]);
+  }, [classification, resident]);
 }

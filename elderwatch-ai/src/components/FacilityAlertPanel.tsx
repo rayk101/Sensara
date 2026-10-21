@@ -93,7 +93,7 @@ export default function FacilityAlertPanel({
       await onSaveToHistory?.(alert);
       setSavedIds(prev => new Set(prev).add(alert.feedId));
     } catch {
-      // Non-fatal
+      setSavedAllMsg("Could not save alert. Please try again.");
     } finally {
       setSavingIds(prev => { const s = new Set(prev); s.delete(alert.feedId); return s; });
     }

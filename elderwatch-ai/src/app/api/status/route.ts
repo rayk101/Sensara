@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { isMongoEnabled, getDb } from "@/lib/mongodb";
 import { isS3Configured } from "@/lib/s3";
@@ -12,13 +14,8 @@ export async function GET() {
 
   if (isMongoEnabled()) {
     try {
-      const db = await Promise.race([
-        getDb(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("MongoDB connection timeout")), 3000)
-        ),
-      ]);
-      await db.command({ ping: 1 });
+      const db = await getDb();
+      await db.command({ ping: 1 }, { timeoutMS: 3000 });
       mongoConnected = true;
     } catch {
       mongoConnected = false;

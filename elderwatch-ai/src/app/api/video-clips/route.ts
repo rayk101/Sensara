@@ -1,5 +1,8 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { createVideoClip, getVideoClipsByResident } from "@/lib/db/videoClips";
+import { getSafetyEvent, linkVideoClipToEvent } from "@/lib/db/events";
 import type { VideoClip } from "@/lib/types";
 
 // POST /api/video-clips — Save clip metadata after a successful S3 upload
@@ -16,6 +19,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    if (eventId) {
+      const event = await getSafetyEvent(eventId);
+      if (!event || event.residentId !== residentId) {
+        return NextResponse.json({ error: "Matching event not found" }, { status: 404 });
+      }
+    }
     const clip: Omit<VideoClip, "_id"> = {
       eventId: eventId ?? null,
       residentId,
@@ -29,11 +38,17 @@ export async function POST(req: Request) {
       durationSeconds: durationSeconds || 0,
       clipStartTime: clipStartTime || new Date().toISOString(),
       clipEndTime: clipEndTime || new Date().toISOString(),
+      hasAudioTrack: body.hasAudioTrack === true,
+      hasVideoTrack: body.hasVideoTrack !== false,
       createdAt: new Date().toISOString(),
     };
 
     const created = await createVideoClip(clip);
-    return NextResponse.json(created, { status: 201 });
+    const event = eventId ? await linkVideoClipToEvent(eventId, created._id!, {
+      s3Key: clip.s3Key, bucket: clip.bucket, contentType: clip.contentType,
+      clipStartTime: clip.clipStartTime, clipEndTime: clip.clipEndTime, durationSeconds: clip.durationSeconds,
+    }) : null;
+    return NextResponse.json({ ...created, event }, { status: 201 });
   } catch (err) {
     console.error("POST /api/video-clips error:", err);
     return NextResponse.json({ error: "Failed to save clip metadata" }, { status: 500 });

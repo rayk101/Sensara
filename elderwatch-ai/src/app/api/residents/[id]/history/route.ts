@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { getResidentHistory } from "@/lib/db/events";
 
@@ -16,10 +18,11 @@ const EMPTY_HISTORY = {
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
-    const history = await getResidentHistory(params.id);
+    const history = await getResidentHistory(id);
     // Ensure recentEvents is always an array even if DB returns unexpected shape
     return NextResponse.json({
       ...EMPTY_HISTORY,
@@ -28,6 +31,6 @@ export async function GET(
     });
   } catch (err) {
     console.error("GET /api/residents/[id]/history error:", err);
-    return NextResponse.json({ ...EMPTY_HISTORY, residentId: params.id });
+    return NextResponse.json({ error: "Failed to load history" }, { status: 500 });
   }
 }

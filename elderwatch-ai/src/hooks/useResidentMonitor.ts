@@ -12,7 +12,7 @@ import {
   DEFAULT_SAFE_ZONE,
   DETECTION_THRESHOLDS,
 } from "@/lib/poseHelpers";
-import { classifyResidentSafety, RECOMMENDED_ACTIONS } from "@/lib/classifySafety";
+import { classifyResidentSafety } from "@/lib/classifySafety";
 import type {
   PoseLandmark,
   SafetySignals,
@@ -48,12 +48,9 @@ export function useResidentMonitor(
   safeZone: SafeZone = DEFAULT_SAFE_ZONE,
   options: MonitorOptions = {}
 ) {
-  // ── Option refs (avoid re-creating processFrame for option changes) ──────────
-  const isPausedRef = useRef(options.isPaused ?? false);
-  const seizureEnabledRef = useRef(options.seizureDetectionEnabled ?? false);
+  const isPaused = options.isPaused ?? false;
+  const seizureDetectionEnabled = options.seizureDetectionEnabled ?? false;
   const wasPausedRef = useRef(false);
-  useEffect(() => { isPausedRef.current = options.isPaused ?? false; }, [options.isPaused]);
-  useEffect(() => { seizureEnabledRef.current = options.seizureDetectionEnabled ?? false; }, [options.seizureDetectionEnabled]);
 
   // ── Time-tracking refs ───────────────────────────────────────────────────────
   const prevLandmarksRef = useRef<PoseLandmark[] | null>(null);
@@ -87,11 +84,61 @@ export function useResidentMonitor(
     timeline: [],
   }));
 
+  const [persistenceError, setPersistenceError] = useState<string | null>(null);
+  const [latestEvent, setLatestEvent] = useState<SafetyEvent | null>(null);
+  const residentIdRef = useRef(resident?.id);
+  useEffect(() => { residentIdRef.current = resident?.id; }, [resident?.id]);
+
+  const resetTimers = useCallback(() => {
+    prevLandmarksRef.current = null;
+    stillSinceRef.current = null;
+    outsideSafeZoneSinceRef.current = null;
+    highMovementSinceRef.current = null;
+    handsNearThroatSinceRef.current = null;
+    lyingDownSinceRef.current = null;
+    badPostureSinceRef.current = null;
+    possibleFallLatchedRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    resetTimers();
+    lastPersistedRef.current = {};
+    setLatestEvent(null);
+    setPersistenceError(null);
+    setState(prev => ({ ...prev, timeline: [], classification: {
+      severity: "stable", eventType: "normal", reason: "Waiting for camera…", confidence: 0,
+    } }));
+  }, [resident?.id, resetTimers]);
+
+  useEffect(() => { resetTimers(); }, [options.isPaused, resetTimers]);
+
+  const upsertEvent = useCallback((event: SafetyEvent) => {
+    if (event.residentId !== residentIdRef.current) return;
+    setLatestEvent(event);
+    setState(prev => ({ ...prev, timeline: [event, ...prev.timeline.filter(item => item._id !== event._id)]
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_TIMELINE_LENGTH) }));
+  }, []);
+
+  const saveEvent = useCallback(async (profile: ResidentProfile, classification: SafetyClassification, signals: SafetySignals) => {
+    try {
+      const saved = await persistEvent(profile, classification, signals);
+      if (profile.id === residentIdRef.current) {
+        upsertEvent(saved);
+        setPersistenceError(null);
+      }
+      return saved;
+    } catch {
+      if (profile.id === residentIdRef.current) {
+        setPersistenceError("Could not save the latest alert. Check the server connection.");
+      }
+    }
+  }, [upsertEvent]);
+
   const processFrame = useCallback(() => {
     if (!resident) return;
 
     // ── Paused: emit a one-shot "paused" classification, then skip ───────────
-    if (isPausedRef.current) {
+    if (isPaused) {
       if (!wasPausedRef.current) {
         wasPausedRef.current = true;
         setState((prev) => ({
@@ -200,9 +247,8 @@ export function useResidentMonitor(
       }
 
       prevLandmarksRef.current = landmarks;
-    } else if (stillSinceRef.current !== null) {
-      // Not visible — maintain stillness counter
-      secondsStill = (now - stillSinceRef.current) / 1000;
+    } else {
+      resetTimers();
     }
 
     const signals: SafetySignals = {
@@ -224,7 +270,7 @@ export function useResidentMonitor(
     };
 
     let classification = classifyResidentSafety(signals, {
-      seizureDetectionEnabled: seizureEnabledRef.current,
+      seizureDetectionEnabled: seizureDetectionEnabled,
     });
 
     // Latch possible_fall — once the resident is detected lying still, keep the
@@ -252,71 +298,38 @@ export function useResidentMonitor(
       const lastTime = lastPersistedRef.current[classification.eventType] ?? 0;
       if (now - lastTime > cooldown) {
         lastPersistedRef.current[classification.eventType] = now;
-        persistEvent(resident, classification, signals);
+        void saveEvent(resident, classification, signals);
       }
     }
 
-    setState((prev) => {
-      const changed =
-        prev.classification.severity !== classification.severity ||
-        prev.classification.eventType !== classification.eventType;
-
-      const newTimeline = changed
-        ? [
-            {
-              _id: `local_${now}`,
-              residentId: resident.id,
-              residentName: resident.name,
-              room: resident.room,
-              severity: classification.severity,
-              eventType: classification.eventType,
-              confidence: classification.confidence,
-              reason: classification.reason,
-              recommendedAction: RECOMMENDED_ACTIONS[classification.eventType] ?? "",
-              signals,
-              source: "live_camera" as const,
-              acknowledged: false,
-              acknowledgedBy: null,
-              acknowledgedAt: null,
-              createdAt: new Date().toISOString(),
-            },
-            ...prev.timeline,
-          ].slice(0, MAX_TIMELINE_LENGTH)
-        : prev.timeline;
-
-      return { signals, classification, timeline: newTimeline };
-    });
-  }, [landmarks, resident, safeZone]);
+    setState(prev => ({ ...prev, signals, classification }));
+  }, [landmarks, resident, safeZone, saveEvent, resetTimers, isPaused, seizureDetectionEnabled]);
 
   // Run processFrame whenever landmarks change
   useEffect(() => {
     processFrame();
   }, [processFrame]);
 
-  // Load historical events from the server on mount / resident change
-  useEffect(() => {
+  const refreshHistory = useCallback(async () => {
     if (!resident) return;
-    let active = true;
-    async function loadHistory() {
-      try {
-        const res = await fetch("/api/events?limit=20");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!active) return;
-        const residentEvents: SafetyEvent[] = (data.events as SafetyEvent[]).filter(
-          (e) => e.residentId === resident!.id
-        );
-        setState((prev) => ({
-          ...prev,
-          timeline: [...prev.timeline, ...residentEvents].slice(0, MAX_TIMELINE_LENGTH),
-        }));
-      } catch {
-        // Non-fatal
-      }
+    const id = resident.id;
+    try {
+      const res = await fetch(`/api/events?residentId=${encodeURIComponent(id)}&limit=50`);
+      if (!res.ok) throw new Error("Could not load history");
+      const data: { events: SafetyEvent[] } = await res.json();
+      if (residentIdRef.current !== id) return;
+      setState(prev => {
+        const events = new Map(prev.timeline.map(event => [event._id, event]));
+        data.events.forEach(event => events.set(event._id, event));
+        return { ...prev, timeline: [...events.values()]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_TIMELINE_LENGTH) };
+      });
+    } catch {
+      if (residentIdRef.current === id) setPersistenceError("Could not load event history.");
     }
-    loadHistory();
-    return () => { active = false; };
-  }, [resident?.id]);
+  }, [resident]);
+
+  useEffect(() => { void refreshHistory(); }, [refreshHistory]);
 
   // ── Demo event injector ────────────────────────────────────────────────────
   const injectDemoEvent = useCallback((
@@ -324,7 +337,6 @@ export function useResidentMonitor(
     severity: SafetyEvent["severity"] = "urgent"
   ) => {
     if (!resident) return;
-    const now = Date.now();
     const demoSignals: SafetySignals = {
       isLyingDown: severity === "urgent" && eventType === "possible_fall",
       movementScore: eventType === "seizure_like_motion" ? 0.9 : 0.05,
@@ -335,58 +347,33 @@ export function useResidentMonitor(
       handsNearThroatSeconds: eventType === "possible_choking" ? 5 : 0,
       secondsHighMovement: eventType === "seizure_like_motion" ? 8 : 0,
     };
-    const demoEvent: SafetyEvent = {
-      _id: `demo_${now}`,
-      residentId: resident.id,
-      residentName: resident.name,
-      room: resident.room,
-      severity,
-      eventType,
-      confidence: 0.88,
+    const demoClassification: SafetyClassification = {
+      severity, eventType, confidence: 0.88,
       reason: `[Demo] ${eventType.replace(/_/g, " ")} simulated via demo trigger`,
-      recommendedAction: RECOMMENDED_ACTIONS[eventType] ?? "",
-      signals: demoSignals,
-      source: "live_camera",
-      acknowledged: false,
-      acknowledgedBy: null,
-      acknowledgedAt: null,
-      hasVideoClip: false,
-      createdAt: new Date().toISOString(),
     };
-    persistEvent(resident, { severity, eventType, reason: demoEvent.reason, confidence: 0.88 }, demoSignals);
-    setState((prev) => ({
-      ...prev,
-      classification: { severity, eventType, reason: demoEvent.reason, confidence: 0.88 },
-      timeline: [demoEvent, ...prev.timeline].slice(0, MAX_TIMELINE_LENGTH),
-    }));
-  }, [resident]);
+    void saveEvent(resident, demoClassification, demoSignals);
+    setState(prev => ({ ...prev, classification: demoClassification }));
+  }, [resident, saveEvent]);
 
-  return { ...state, injectDemoEvent };
+  return { ...state, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent };
 }
 
-// ─── Fire-and-forget event persistence ───────────────────────────────────────
-function persistEvent(
+// Only show persisted events in the actionable timeline so IDs match the API.
+async function persistEvent(
   resident: ResidentProfile,
   classification: SafetyClassification,
   signals: SafetySignals
-) {
-  // Strip the runtime-only timing/debug fields before persisting
-  const { secondsOutsideSafeZone, secondsHighMovement, handsNearThroatSeconds, secondsLyingDown, secondsBadPosture, majorBodyMovementScore, leftHandNearThroat, rightHandNearThroat, bothHandsNearThroat, ...coreSignals } = signals;
-  void secondsOutsideSafeZone; void secondsHighMovement; void handsNearThroatSeconds; void secondsLyingDown; void secondsBadPosture; void majorBodyMovementScore;
-  void leftHandNearThroat; void rightHandNearThroat; void bothHandsNearThroat;
-
-  fetch("/api/events", {
+): Promise<SafetyEvent> {
+  const { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible } = signals;
+  const response = await fetch("/api/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      residentId: resident.id,
-      residentName: resident.name,
-      room: resident.room,
-      severity: classification.severity,
-      eventType: classification.eventType,
-      confidence: classification.confidence,
-      reason: classification.reason,
-      signals: coreSignals,
+      residentId: resident.id, residentName: resident.name, room: resident.room,
+      ...classification,
+      signals: { isLyingDown, movementScore, postureAngle, secondsStill, insideSafeZone, visible },
     }),
-  }).catch(() => {/* Non-fatal */});
+  });
+  if (!response.ok) throw new Error("Could not save event");
+  return response.json();
 }

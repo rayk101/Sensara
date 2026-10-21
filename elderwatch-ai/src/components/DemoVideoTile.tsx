@@ -21,6 +21,7 @@ export interface DemoFeedStatus {
 
 interface DemoVideoTileProps {
   config: DemoFeedConfig;
+  isPaused?: boolean;
   onStatusChange?: (feedId: string, status: DemoFeedStatus) => void;
 }
 
@@ -69,7 +70,7 @@ function getScriptedStatus(feedId: string, currentTime: number): DemoFeedStatus 
   }
 }
 
-export default function DemoVideoTile({ config, onStatusChange }: DemoVideoTileProps) {
+export default function DemoVideoTile({ config, onStatusChange, isPaused = false }: DemoVideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentStatus, setCurrentStatus] = useState<DemoFeedStatus>({
     severity: "stable",
@@ -84,6 +85,17 @@ export default function DemoVideoTile({ config, onStatusChange }: DemoVideoTileP
   const onStatusChangeRef = useRef(onStatusChange);
   useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (isPaused) video.pause();
+    else void video.play().catch(() => setVideoError(true));
+  }, [isPaused]);
+
+  useEffect(() => {
+    onStatusChangeRef.current?.(config.id, currentStatus);
+  }, [config.id, currentStatus]);
+
   // Update scripted status on each video timeupdate
   useEffect(() => {
     const video = videoRef.current;
@@ -93,7 +105,6 @@ export default function DemoVideoTile({ config, onStatusChange }: DemoVideoTileP
       const newStatus = getScriptedStatus(config.id, video.currentTime);
       setCurrentStatus(prev => {
         if (prev.severity !== newStatus.severity || prev.eventType !== newStatus.eventType) {
-          onStatusChangeRef.current?.(config.id, newStatus);
           return newStatus;
         }
         return prev;
@@ -171,7 +182,7 @@ export default function DemoVideoTile({ config, onStatusChange }: DemoVideoTileP
           <video
             ref={videoRef}
             src={`/demo-videos/${config.videoFile}`}
-            autoPlay
+            autoPlay={!isPaused}
             muted
             loop
             playsInline

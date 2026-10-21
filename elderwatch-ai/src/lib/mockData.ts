@@ -43,6 +43,11 @@ export const MOCK_RESIDENTS: ResidentProfile[] = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: "demo_resident_004", name: "Daniel Price", age: 80, room: "Lounge Area",
+    mobility: "Independent", fallRisk: "Medium", conditions: [],
+    careNotes: "Check on resident during shared lounge activities.",
+  },
 ];
 
 // Generates a batch of realistic historical events spread over the last 24h
@@ -251,6 +256,10 @@ export class InMemoryStore {
       .slice(0, limit);
   }
 
+  getEventById(id: string) {
+    return this.events.find((event) => event._id === id) ?? null;
+  }
+
   createEvent(event: SafetyEvent) {
     this.events.unshift(event);
     return event;
@@ -321,7 +330,8 @@ export class InMemoryStore {
   getResidentHistory(residentId: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const events = this.getEventsByResident(residentId);
+    const events = this.events.filter(event => event.residentId === residentId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const todayEvents = events.filter((e) => new Date(e.createdAt) >= today);
 
     const typeCounts: Record<string, number> = {};
@@ -381,10 +391,9 @@ export const MOCK_VIDEO_CLIPS: VideoClip[] = [
   },
 ];
 
-// Singleton in-memory store — used when MongoDB is unavailable
-let _inMemoryStore: InMemoryStore | null = null;
+// Local demo data is shared across route bundles and survives hot reloads.
+const demoGlobal = globalThis as typeof globalThis & { sensaraStore?: InMemoryStore };
 
 export function getInMemoryStore(): InMemoryStore {
-  if (!_inMemoryStore) _inMemoryStore = new InMemoryStore();
-  return _inMemoryStore;
+  return (demoGlobal.sensaraStore ??= new InMemoryStore());
 }

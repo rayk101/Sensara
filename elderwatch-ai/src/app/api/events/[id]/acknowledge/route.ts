@@ -3,12 +3,14 @@ import { acknowledgeEvent } from "@/lib/db/events";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const body = await req.json().catch(() => ({}));
-    const acknowledgedBy = body.acknowledgedBy || "Demo Caregiver";
-    const updated = await acknowledgeEvent(params.id, acknowledgedBy);
+    const acknowledgedBy = body?.acknowledgedBy ?? "Demo Caregiver";
+    if (typeof acknowledgedBy !== "string" || !acknowledgedBy.trim()) return NextResponse.json({ error: "Invalid caregiver name" }, { status: 400 });
+    const updated = await acknowledgeEvent(id, acknowledgedBy);
     if (!updated) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }

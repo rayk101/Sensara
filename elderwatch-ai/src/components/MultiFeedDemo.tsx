@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import DemoVideoTile, { type DemoFeedConfig, type DemoFeedStatus } from "./DemoVideoTile";
 import FacilityAlertPanel, { type FeedAlert } from "./FacilityAlertPanel";
 
@@ -51,15 +51,13 @@ const defaultFeedState: FeedState = {
   alertSince: 0,
 };
 
-export default function MultiFeedDemo() {
+export default function MultiFeedDemo({ isPaused = false }: { isPaused?: boolean }) {
   const [feedStates, setFeedStates] = useState<Record<string, FeedState>>({});
-  // Track previous severity per feed so we preserve alertSince timestamp
-  const prevSeverityRef = useRef<Record<string, string>>({});
 
   const handleStatusChange = useCallback((feedId: string, status: DemoFeedStatus) => {
     setFeedStates(prev => {
       const prevState = prev[feedId];
-      const prevSeverity = prevSeverityRef.current[feedId] ?? "stable";
+      const prevSeverity = prevState?.severity ?? "stable";
 
       // Only reset alertSince when severity transitions from stable → non-stable
       const alertSince =
@@ -67,7 +65,6 @@ export default function MultiFeedDemo() {
           ? Date.now()
           : (prevState?.alertSince ?? Date.now());
 
-      prevSeverityRef.current[feedId] = status.severity;
       return { ...prev, [feedId]: { ...status, alertSince } };
     });
   }, []);
@@ -89,7 +86,7 @@ export default function MultiFeedDemo() {
 
   const saveEvent = async (alert: FeedAlert) => {
     if (alert.severity === "stable") return;
-    await fetch("/api/events", {
+    const response = await fetch("/api/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -104,11 +101,12 @@ export default function MultiFeedDemo() {
         acknowledged: false,
       }),
     });
+    if (!response.ok) throw new Error("Could not save alert");
   };
 
   const handleSaveAll = async () => {
     const active = alerts.filter(a => a.severity !== "stable");
-    await Promise.allSettled(active.map(saveEvent));
+    await Promise.all(active.map(saveEvent));
   };
 
   return (
@@ -121,6 +119,7 @@ export default function MultiFeedDemo() {
             <DemoVideoTile
               key={feed.id}
               config={feed}
+              isPaused={isPaused}
               onStatusChange={handleStatusChange}
             />
           ))}

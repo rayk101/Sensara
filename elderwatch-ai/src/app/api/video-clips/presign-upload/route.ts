@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { isS3Configured, createPresignedUploadUrl, getS3Bucket } from "@/lib/s3";
 

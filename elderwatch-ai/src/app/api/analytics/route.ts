@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { getEventAnalytics } from "@/lib/db/events";
 import { isMongoEnabled } from "@/lib/mongodb";

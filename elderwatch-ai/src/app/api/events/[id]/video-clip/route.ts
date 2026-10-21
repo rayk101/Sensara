@@ -6,8 +6,9 @@ import { linkVideoClipToEvent } from "@/lib/db/events";
 // after a successful clip upload so the event shows the "📹 Video Clip" badge.
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params;
   try {
     const body = await req.json();
     const { clipId, s3Key, bucket, contentType, durationSeconds, clipStartTime, clipEndTime } = body;
@@ -16,7 +17,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Missing clipId, s3Key, or bucket" }, { status: 400 });
     }
 
-    const updated = await linkVideoClipToEvent(params.id, clipId, {
+    const updated = await linkVideoClipToEvent(id, clipId, {
       s3Key,
       bucket,
       contentType: contentType ?? "video/webm",

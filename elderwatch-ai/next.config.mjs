@@ -1,12 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
-  webpack: (config) => {
-    // Preserve existing aliases and externals for MediaPipe WASM compatibility
-    config.resolve.alias = { ...config.resolve.alias };
-    config.externals = [...(config.externals || [])];
-    return config;
-  },
+  output: process.env.BUILD_STANDALONE === "1" ? "standalone" : undefined,
 };
 
 export default nextConfig;

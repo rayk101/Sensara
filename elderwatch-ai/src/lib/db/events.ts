@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { getDb, isMongoEnabled } from "../mongodb";
 import { generateMockEvents, getInMemoryStore } from "../mockData";
 import { getVideoClipsByResident } from "./videoClips";
-import type { SafetyEvent, DashboardAnalytics, ResidentHistory, EventTypeValue } from "../types";
+import type { SafetyEvent, DashboardAnalytics, ResidentHistory, EventTypeValue, VideoClipMeta } from "../types";
 
 const COLLECTION = "safety_events";
 
@@ -128,7 +128,7 @@ export async function getResidentHistory(residentId: string): Promise<ResidentHi
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString();
 
-  const [todayEvents, allEvents, videoClips] = await Promise.all([
+  const [todayEvents, allEvents, videoClips, summary, clipCount] = await Promise.all([
     db
       .collection(COLLECTION)
       .countDocuments({ residentId, createdAt: { $gte: todayStr } }),
@@ -139,20 +139,27 @@ export async function getResidentHistory(residentId: string): Promise<ResidentHi
       .limit(30)
       .toArray(),
     getVideoClipsByResident(residentId, 10),
+    db.collection(COLLECTION).aggregate([
+      { $match: { residentId } },
+      { $group: { _id: { eventType: "$eventType", severity: "$severity" }, count: { $sum: 1 } } },
+    ]).toArray(),
+    db.collection("video_clips").countDocuments({ residentId }),
   ]);
 
   const typeCounts: Record<string, number> = {};
-  for (const e of allEvents) {
-    typeCounts[e.eventType] = (typeCounts[e.eventType] || 0) + 1;
+  const severityCounts: Record<string, number> = {};
+  for (const item of summary) {
+    typeCounts[item._id.eventType] = (typeCounts[item._id.eventType] || 0) + item.count;
+    severityCounts[item._id.severity] = (severityCounts[item._id.severity] || 0) + item.count;
   }
   const mostCommon = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0];
 
   return {
     totalEventsToday: todayEvents,
-    urgentEvents: allEvents.filter((e) => e.severity === "urgent").length,
-    assistEvents: allEvents.filter((e) => e.severity === "assist").length,
-    watchEvents: allEvents.filter((e) => e.severity === "watch").length,
-    totalVideoClips: videoClips.length,
+    urgentEvents: severityCounts.urgent ?? 0,
+    assistEvents: severityCounts.assist ?? 0,
+    watchEvents: severityCounts.watch ?? 0,
+    totalVideoClips: clipCount,
     latestVideoClipAt: videoClips[0]?.createdAt ?? null,
     mostCommonEventType: (mostCommon?.[0] as EventTypeValue) ?? null,
     lastEventAt: allEvents[0]?.createdAt ?? null,
@@ -168,6 +175,31 @@ export async function seedEvents(): Promise<void> {
   const existing = await col.countDocuments();
   if (existing > 0) return; // Don't re-seed
   const events = generateMockEvents();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await col.insertMany(events as any);
+  await db.collection<SafetyEvent>(COLLECTION).insertMany(events);
+}
+
+export async function getSafetyEvent(id: string): Promise<SafetyEvent | null> {
+  if (!isMongoEnabled()) return getInMemoryStore().getEventById(id);
+  const db = await getDb();
+  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id };
+  return db.collection(COLLECTION).findOne(filter as object) as unknown as Promise<SafetyEvent | null>;
+}
+
+export async function linkVideoClipToEvent(
+  id: string,
+  clipId: string,
+  videoClip: VideoClipMeta
+): Promise<SafetyEvent | null> {
+  const update = { hasVideoClip: true, videoClipId: clipId, videoClip };
+  if (!isMongoEnabled()) {
+    const event = getInMemoryStore().getEventById(id);
+    if (!event) return null;
+    Object.assign(event, update);
+    return event;
+  }
+  const db = await getDb();
+  const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id };
+  return db.collection(COLLECTION).findOneAndUpdate(
+    filter as object, { $set: update }, { returnDocument: "after" }
+  ) as unknown as Promise<SafetyEvent | null>;
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import dynamic from "next/dynamic";
+import Image from "next/image";
+import PoseCamera from "@/components/PoseCamera";
 import { MOCK_RESIDENTS } from "@/lib/mockData";
 import { DEFAULT_SAFE_ZONE, clampSafeZone, DETECTION_THRESHOLDS } from "@/lib/poseHelpers";
 import { usePoseDetection } from "@/hooks/usePoseDetection";
@@ -39,8 +40,6 @@ function saveSafeZone(z: SafeZone) {
   try { localStorage.setItem(SAFE_ZONE_KEY, JSON.stringify(z)); } catch { /* ignore */ }
 }
 
-// PoseCamera uses canvas/webcam APIs — load client-only
-const PoseCamera = dynamic(() => import("@/components/PoseCamera"), { ssr: false });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sensara — Main Dashboard
@@ -49,20 +48,15 @@ const PoseCamera = dynamic(() => import("@/components/PoseCamera"), { ssr: false
 type MainTab = "multi-feed" | "live-camera";
 
 export default function Dashboard() {
-  const [residents] = useState<ResidentProfile[]>(MOCK_RESIDENTS);
+  const [residents, setResidents] = useState<ResidentProfile[]>(MOCK_RESIDENTS);
   const [selectedResidentId, setSelectedResidentId] = useState<string>(MOCK_RESIDENTS[0].id);
   const [mongoConnected, setMongoConnected] = useState(false);
-  const [s3Configured, setS3Configured] = useState(false);
-  const [elevenLabsConfigured, setElevenLabsConfigured] = useState(false);
-  const [smsConfigured, setSmsConfigured] = useState(false);
   const [emailConfigured, setEmailConfigured] = useState(false);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [isPaused, setIsPaused] = useState(false);
-  const [seizureDetectionEnabled, setSeizureDetectionEnabled] = useState(false);
+  const seizureDetectionEnabled = false;
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
-  const [isSeedLoading, setIsSeedLoading] = useState(false);
-  const [seedMessage, setSeedMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"monitor" | "history">("monitor");
   const [mainTab, setMainTab] = useState<MainTab>("multi-feed");
 
@@ -71,34 +65,42 @@ export default function Dashboard() {
   const [safeZoneEditMode, setSafeZoneEditMode] = useState(false);
 
   useEffect(() => { setSafeZone(loadSafeZone()); }, []);
-  useEffect(() => { saveSafeZone(safeZone); }, [safeZone]);
 
-  const handleSafeZoneChange = useCallback((z: SafeZone) => setSafeZone(clampSafeZone(z)), []);
-  const resetSafeZone = useCallback(() => setSafeZone(DEFAULT_SAFE_ZONE), []);
+
+  const handleSafeZoneChange = useCallback((z: SafeZone) => {
+    const next = clampSafeZone(z);
+    setSafeZone(next);
+    saveSafeZone(next);
+  }, []);
+  const resetSafeZone = useCallback(() => handleSafeZoneChange(DEFAULT_SAFE_ZONE), [handleSafeZoneChange]);
 
   const selectedResident = residents.find((r) => r.id === selectedResidentId) ?? residents[0];
 
-  // ── Pose detection (always running so camera is ready on tab switch) ──────
-  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection();
+  // Request the webcam only while the live tab is active.
+  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(mainTab === "live-camera" && !isPaused);
 
   // ── Safety monitoring ─────────────────────────────────────────────────────
-  const { signals, classification, timeline, injectDemoEvent } = useResidentMonitor(
+  const { signals, classification, timeline, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     landmarks,
     selectedResident,
     safeZone,
-    { isPaused, seizureDetectionEnabled }
+    { isPaused: isPaused || mainTab !== "live-camera" || poseStatus !== "running", seizureDetectionEnabled }
   );
 
+  useEffect(() => {
+    if (mainTab === "live-camera") void refreshHistory();
+  }, [mainTab, refreshHistory]);
+
   // ── TTS + visual alerts ───────────────────────────────────────────────────
-  useAlerts(classification, selectedResident);
+  useAlerts(isPaused || mainTab !== "live-camera" ? null : classification, selectedResident);
 
   // ── Critical event video recording (shared function for all triggers) ─────
-  const { recordingStatus, statusMessage: recordingMessage, triggerDemo } = useVideoRecorder(
+  const { recordingStatus, statusMessage: recordingMessage } = useVideoRecorder(
     stream,
-    classification,
-    selectedResident,
+    latestEvent,
     micStream,
-    isPaused
+    isPaused || mainTab !== "live-camera",
+    upsertEvent
   );
 
   // ── Test email alert ──────────────────────────────────────────────────────
@@ -116,86 +118,55 @@ export default function Dashboard() {
   // ── Demo triggers ─────────────────────────────────────────────────────────
   const handleTriggerDemo = useCallback(() => {
     injectDemoEvent("possible_fall", "urgent");
-    triggerDemo();
-  }, [injectDemoEvent, triggerDemo]);
-
-  const handleSimulateChoking = useCallback(() => {
-    injectDemoEvent("possible_choking", "urgent");
-    triggerDemo();
-  }, [injectDemoEvent, triggerDemo]);
+  }, [injectDemoEvent]);
 
   // ── Check service status on mount ─────────────────────────────────────────
   useEffect(() => {
     fetch("/api/residents")
       .then((r) => r.json())
-      .then((d) => setMongoConnected(d.mongoConnected === true))
+      .then((d) => {
+        if (Array.isArray(d.residents) && d.residents.length) {
+          setResidents(d.residents);
+          setSelectedResidentId(id => d.residents.some((resident: ResidentProfile) => resident.id === id) ? id : d.residents[0].id);
+        }
+      })
       .catch(() => setMongoConnected(false));
-
-    fetch("/api/video-clips/presign-upload")
-      .then((r) => r.json())
-      .then((d) => setS3Configured(d.s3Configured === true))
-      .catch(() => setS3Configured(false));
-
-    fetch("/api/audio/analyze")
-      .then((r) => r.json())
-      .then((d) => setElevenLabsConfigured(d.elevenLabsConfigured === true))
-      .catch(() => setElevenLabsConfigured(false));
 
     fetch("/api/status")
       .then((r) => r.json())
       .then((d) => {
-        setSmsConfigured(d.smsConfigured === true);
+        setMongoConnected(d.mongoConnected === true);
         setEmailConfigured(d.emailConfigured === true);
       })
       .catch(() => {
-        setSmsConfigured(false);
         setEmailConfigured(false);
       });
   }, []);
 
   // ── Acknowledge event ─────────────────────────────────────────────────────
   const handleAcknowledge = useCallback(async (eventId: string) => {
-    try {
-      await fetch(`/api/events/${eventId}/acknowledge`, {
+    const response = await fetch(`/api/events/${eventId}/acknowledge`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ acknowledgedBy: "Demo Caregiver" }),
       });
-      setAnalyticsRefreshKey((k) => k + 1);
-    } catch { /* non-fatal */ }
-  }, []);
+    if (!response.ok) throw new Error("Could not acknowledge event");
+    upsertEvent(await response.json());
+    setAnalyticsRefreshKey((k) => k + 1);
+  }, [upsertEvent]);
 
   // ── Add caregiver note ────────────────────────────────────────────────────
   const handleAddNote = useCallback(
     async (eventId: string, residentId: string, note: string) => {
-      try {
-        await fetch(`/api/events/${eventId}/notes`, {
+      const response = await fetch(`/api/events/${eventId}/notes`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ residentId, note, createdBy: "Demo Caregiver" }),
         });
-      } catch { /* non-fatal */ }
+      if (!response.ok) throw new Error("Could not save note");
     },
     []
   );
-
-  // ── Seed demo data ────────────────────────────────────────────────────────
-  const handleSeed = async () => {
-    setIsSeedLoading(true);
-    setSeedMessage(null);
-    try {
-      const res = await fetch("/api/seed", { method: "POST" });
-      const data = await res.json();
-      setSeedMessage(data.message ?? "Done");
-      if (data.s3Configured !== undefined) setS3Configured(data.s3Configured);
-      setAnalyticsRefreshKey((k) => k + 1);
-    } catch {
-      setSeedMessage("Seed failed. Check server logs.");
-    } finally {
-      setIsSeedLoading(false);
-      setTimeout(() => setSeedMessage(null), 4000);
-    }
-  };
 
   const severityGlow: Record<string, string> = {
     stable: "",
@@ -213,9 +184,12 @@ export default function Dashboard() {
 
           {/* Logo */}
           <div className="flex items-center gap-3 shrink-0">
-            <img
+            <Image
               src="/sensara-logo.png"
               alt="Sensara"
+              width={80}
+              height={80}
+              priority
               className="w-20 h-20 object-contain"
             />
             <div>
@@ -263,11 +237,6 @@ export default function Dashboard() {
       </header>
 
       {/* ── Toasts (always on top, fixed position) ────────────────────────── */}
-      {seedMessage && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-green-900 text-green-200 border border-green-700 rounded-xl px-4 py-2 text-sm shadow-xl animate-fade-in">
-          {seedMessage}
-        </div>
-      )}
       {recordingMessage && (
         <div className={`fixed top-20 right-4 z-50 rounded-xl px-4 py-2 text-sm shadow-xl border animate-fade-in flex items-center gap-2
           ${recordingStatus === "capturing" ? "bg-red-900 text-red-200 border-red-700" :
@@ -287,12 +256,11 @@ export default function Dashboard() {
 
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>
-          <MultiFeedDemo />
+          <MultiFeedDemo isPaused={isPaused || mainTab !== "multi-feed"} />
         </div>
 
         {/* ── TAB 2: Live Camera Demo ─────────────────────────────────────── */}
-        {/* Keep always mounted (not conditional) so videoRef/canvasRef are in the DOM and
-            usePoseDetection can complete its init even while Multi-Feed tab is active. */}
+        {/* Keep refs mounted while the hook controls camera acquisition and cleanup. */}
         <div className={mainTab === "live-camera" ? "" : "hidden"}>
           <div>
             {/* Live Camera controls */}
@@ -427,12 +395,11 @@ export default function Dashboard() {
                 {/* Analytics + AI + Audio Monitor */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                   <AnalyticsCard mongoConnected={mongoConnected} refreshTrigger={analyticsRefreshKey} />
-                  <AIAssistant resident={selectedResident} classification={classification} />
+                  <AIAssistant key={selectedResident.id} resident={selectedResident} classification={classification} />
                   <AudioMonitor
                     resident={selectedResident}
-                    isPaused={isPaused}
-                    onCriticalAudioDetected={triggerDemo}
-                    onInjectDemoEvent={injectDemoEvent as (eventType: string, severity: string) => void}
+                    isPaused={isPaused || mainTab !== "live-camera"}
+                    onEventSaved={upsertEvent}
                     onMicStream={setMicStream}
                   />
                 </div>
@@ -452,7 +419,7 @@ export default function Dashboard() {
                   <div className="flex border-b border-sensara-divider">
                     <TabButton
                       active={activeTab === "monitor"}
-                      onClick={() => setActiveTab("monitor")}
+                      onClick={() => { setActiveTab("monitor"); void refreshHistory(); }}
                       label="Live Events"
                     />
                     <TabButton
@@ -462,6 +429,7 @@ export default function Dashboard() {
                     />
                   </div>
                   <div className="p-3">
+                    {persistenceError && <p role="alert" className="text-red-700 text-xs mb-2">{persistenceError}</p>}
                     {activeTab === "monitor" && (
                       <EventTimeline
                         events={timeline.filter((e) => e.eventType !== "normal")}
@@ -631,12 +599,15 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
   const [clipError, setClipError] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/residents/${residentId}/history`)
+    setHistory(null);
+    fetch(`/api/residents/${residentId}/history`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setHistory(d))
-      .catch(() => setHistory(null))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!controller.signal.aborted) setHistory(d); })
+      .catch(() => { if (!controller.signal.aborted) setHistory(null); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
   }, [residentId]);
 
   const handleViewClip = async (clipId: string, label: string) => {
@@ -665,7 +636,7 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
     return (
       <div className="space-y-2">
         {[...Array(3)].map((_, i) => (
-          <div key={i} className="h-12 bg-gray-700/40 rounded-lg animate-pulse" />
+          <div key={i} className="h-12 bg-sensara-warm-100 rounded-lg animate-pulse" />
         ))}
       </div>
     );
@@ -693,27 +664,27 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
     <div className="space-y-3">
       {/* Summary stats */}
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="bg-gray-700/40 rounded-lg p-2">
+        <div className="bg-sensara-warm-100 rounded-lg p-2">
           <p className="text-gray-500">Today</p>
-          <p className="text-white font-bold text-lg">{history.totalEventsToday}</p>
+          <p className="text-sensara-forest-900 font-bold text-lg">{history.totalEventsToday}</p>
           <p className="text-gray-500">events</p>
         </div>
-        <div className="bg-red-950/30 rounded-lg p-2 border border-red-900/40">
+        <div className="bg-red-50 rounded-lg p-2 border border-red-200">
           <p className="text-gray-500">Urgent (all time)</p>
-          <p className="text-red-300 font-bold text-lg">{history.urgentEvents}</p>
+          <p className="text-red-700 font-bold text-lg">{history.urgentEvents}</p>
         </div>
-        <div className="bg-orange-950/30 rounded-lg p-2 border border-orange-900/40">
+        <div className="bg-orange-50 rounded-lg p-2 border border-orange-200">
           <p className="text-gray-500">Assist</p>
-          <p className="text-orange-300 font-bold text-lg">{history.assistEvents}</p>
+          <p className="text-orange-700 font-bold text-lg">{history.assistEvents}</p>
         </div>
-        <div className="bg-blue-950/30 rounded-lg p-2 border border-blue-900/40">
+        <div className="bg-blue-50 rounded-lg p-2 border border-blue-200">
           <p className="text-gray-500">Video Clips</p>
-          <p className="text-blue-300 font-bold text-lg">{history.totalVideoClips ?? 0}</p>
+          <p className="text-blue-700 font-bold text-lg">{history.totalVideoClips ?? 0}</p>
         </div>
       </div>
 
       {history.mostCommonEventType && (
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-sensara-warm-700">
           Most common:{" "}
           <span className="text-white font-medium">
             {EVENT_LABELS[history.mostCommonEventType] ?? history.mostCommonEventType}
@@ -774,13 +745,13 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
               <button onClick={() => setViewingClip(null)} className="text-gray-500 hover:text-white text-lg">✕</button>
             </div>
             {clipLoading && (
-              <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
+              <div className="flex items-center justify-center h-32 text-sensara-warm-700 text-sm">
                 <span className="w-5 h-5 border-2 border-gray-600 border-t-white rounded-full animate-spin mr-2" />
                 Loading clip…
               </div>
             )}
             {clipError && (
-              <div className="bg-red-950/50 border border-red-800/60 rounded-lg p-4 text-red-300 text-sm">{clipError}</div>
+              <div className="bg-red-950/50 border border-red-800/60 rounded-lg p-4 text-red-700 text-sm">{clipError}</div>
             )}
             {clipUrl && (
               <video src={clipUrl} controls autoPlay className="w-full rounded-lg bg-black max-h-96" />
@@ -802,7 +773,7 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
           {(history.recentEvents ?? []).map((e) => (
             <div
               key={e._id}
-              className="flex items-start gap-2 text-xs text-gray-400 bg-gray-700/30 rounded-lg p-2"
+              className="flex items-start gap-2 text-xs text-sensara-warm-700 bg-gray-700/30 rounded-lg p-2"
             >
               <span
                 className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${

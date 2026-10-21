@@ -21,7 +21,7 @@ Sensara runs MediaPipe pose detection entirely in the browser, extracting 33 bod
 | Immobility | No significant movement for >5 minutes → Assist |
 | Wandering | Torso center exits safe zone for >3 continuous seconds → Watch |
 | Unsafe posture | Torso angle >35° sustained for >3s → Watch/Assist |
-| Choking (visual) | Both wrists near throat for >4 continuous seconds → Urgent |
+| Choking (visual) | Hand near throat for ≥2 continuous seconds → Urgent |
 | Audio distress | ElevenLabs transcribes mic; distress keywords trigger Urgent/Assist |
 | Out of frame | Key landmarks not visible → Watch |
 
@@ -31,7 +31,7 @@ Sensara captures microphone input in 6-second chunks via the MediaRecorder API a
 ## Tech Stack
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 14 (App Router) + TypeScript |
+| Framework | Next.js 15 (App Router) + TypeScript |
 | Styling | Tailwind CSS |
 | Pose Detection | MediaPipe Pose Landmarker — runs entirely in-browser |
 | Database | MongoDB Atlas |
@@ -45,3 +45,63 @@ Sensara captures microphone input in 6-second chunks via the MediaRecorder API a
 
 ## MongoDB Atlas
 Every detected safety event is stored as a document in real time. Collections: `safety_events`, `residents`, `caregiver_notes`, `video_clips`. Aggregation pipelines power 24-hour analytics and per-resident history. App runs fully in-memory demo mode if `MONGODB_URI` is not set.
+
+## Run locally
+
+Requires Node.js 22 or newer and npm. From the repository root:
+
+```sh
+cd elderwatch-ai
+npm ci
+npm run dev
+```
+
+Open the local URL printed by Next.js (normally http://127.0.0.1:3000). If another app is using that port, choose one explicitly:
+
+```sh
+npm run dev -- --port 3002
+```
+
+Press `Ctrl+C` in the server terminal to stop it. The server binds to the local machine only.
+
+No credentials are required for the demo. The four video feeds, alert history, acknowledgements, caregiver notes, analytics, audio distress simulation, and mock assistant work locally. Demo data is held in memory and resets when the server restarts. Pause stops the demo videos and releases the live camera/microphone. Opening the Live Camera tab while monitoring is active requests camera permission. Pose detection downloads its model/WASM assets, so it requires an internet connection.
+
+For optional services, copy the empty example and fill in only the credentials you intend to use, then restart the server:
+
+```sh
+cp .env.local.example .env.local
+```
+
+MongoDB, S3 uploads/playback, ElevenLabs transcription, Anthropic responses, Twilio SMS, and Resend email require their respective settings in `.env.local`. Configuring SMS or email enables real outgoing urgent alerts. Keep this prototype local; it does not implement authentication.
+
+## Checks
+
+```sh
+npm run check       # ESLint, TypeScript, and regression tests
+npm run build       # Production compilation
+```
+
+With the app running in demo mode and SMS/email unconfigured:
+
+```sh
+BASE_URL=http://127.0.0.1:3002 npm run test:smoke
+```
+
+The smoke test creates in-memory test events and checks persistence across API routes, acknowledgements, notes, history, fresh analytics, invalid input, audio simulation, assistant fallback, disabled storage responses, and all four video assets. Restart the server to clear test records. It does not exercise real camera/microphone input or cloud credentials.
+
+To run a production build locally:
+
+```sh
+npm run build
+npm start -- --port 3002
+```
+
+The Docker setup also includes the demo video/logo assets:
+
+```sh
+docker compose up --build
+```
+
+## Maintenance notes
+
+The app uses Next.js 15.5 with promise-based route parameters. The MediaPipe JavaScript package is pinned to the same version as its WASM runtime. Run `npm audit` when updating dependencies; remaining Tailwind 3/ESLint transitive advisories need separate dependency maintenance. Local verification does not establish clinical detection accuracy.

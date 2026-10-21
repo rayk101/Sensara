@@ -302,8 +302,8 @@ export function isPoseVisible(landmarks: PoseLandmark[]): boolean {
 // ─── Clamp a safe zone — horizontal boundaries only, always spans full height ──
 // y is always 0, height is always 1. Only x and width are adjustable.
 export function clampSafeZone(z: SafeZone): SafeZone {
-  const x = Math.max(0, Math.min(0.85, z.x));
-  const width = Math.max(0.1, Math.min(1 - x, z.width));
+  const x = Number.isFinite(z.x) ? Math.max(0, Math.min(0.85, z.x)) : 0.1;
+  const width = Number.isFinite(z.width) ? Math.max(0.1, Math.min(1 - x, z.width)) : 1 - x;
   return { x, y: 0, width, height: 1 };
 }
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ensureIndexes } from "@/lib/db/indexes";
 import { seedResidents } from "@/lib/db/residents";
 import { seedEvents } from "@/lib/db/events";
 import { seedNotes } from "@/lib/db/notes";
@@ -16,6 +17,7 @@ export async function POST() {
   }
 
   try {
+    await ensureIndexes();
     await Promise.all([seedResidents(), seedEvents(), seedNotes(), seedVideoClips()]);
     return NextResponse.json({
       message: "Demo data seeded successfully into MongoDB.",

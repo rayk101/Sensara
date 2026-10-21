@@ -6,8 +6,8 @@ import type { SafetyEvent } from "@/lib/types";
 
 interface EventTimelineProps {
   events: SafetyEvent[];
-  onAcknowledge: (eventId: string) => void;
-  onAddNote: (eventId: string, residentId: string, note: string) => void;
+  onAcknowledge: (eventId: string) => Promise<void>;
+  onAddNote: (eventId: string, residentId: string, note: string) => Promise<void>;
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -135,16 +135,19 @@ function VideoClipModal({
 }
 
 export default function EventTimeline({ events, onAcknowledge, onAddNote }: EventTimelineProps) {
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState<Record<string, string>>({});
   const [viewingClip, setViewingClip] = useState<{ clipId: string; label: string } | null>(null);
 
   const deduplicated = events.filter(
-    (e, i, arr) => e.eventType === "normal" || arr.findIndex((x) => x._id === e._id) === i
+    (e, i, arr) => arr.findIndex((x) => x._id === e._id) === i
   );
 
   return (
     <>
+      {actionMessage && <p role="status" className="text-xs mb-2">{actionMessage}</p>}
       <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
         {deduplicated.length === 0 && (
           <p className="text-sensara-warm-500 text-sm text-center py-6">
@@ -209,14 +212,14 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote }: Even
                   {event.audioTranscript && (
                     <div className="bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5">
                       <p className="text-[9px] text-purple-600 mb-0.5">Transcript</p>
-                      <p className="text-xs text-purple-800 italic">"{event.audioTranscript}"</p>
+                      <p className="text-xs text-purple-800 italic">&ldquo;{event.audioTranscript}&rdquo;</p>
                     </div>
                   )}
 
                   <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-sensara-warm-600">
                     <span>Confidence: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}%</b></span>
-                    <span>Posture: <b className="text-sensara-forest-900">{Math.round(event.signals.postureAngle)}°</b></span>
-                    <span>Still: <b className="text-sensara-forest-900">{Math.round(event.signals.secondsStill)}s</b></span>
+                    <span>Posture: <b className="text-sensara-forest-900">{Math.round(event.signals?.postureAngle ?? 0)}°</b></span>
+                    <span>Still: <b className="text-sensara-forest-900">{Math.round(event.signals?.secondsStill ?? 0)}s</b></span>
                   </div>
 
                   {/* View Clip button */}
@@ -237,7 +240,14 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote }: Even
                   {/* Acknowledge button */}
                   {isNonStable && !event.acknowledged && event._id && (
                     <button
-                      onClick={() => onAcknowledge(event._id!)}
+                      disabled={pendingId === event._id}
+                      onClick={async () => {
+                        setPendingId(event._id!);
+                        setActionMessage(null);
+                        try { await onAcknowledge(event._id!); }
+                        catch { setActionMessage("Could not acknowledge alert. Please try again."); }
+                        finally { setPendingId(null); }
+                      }}
                       className="w-full text-xs bg-sensara-warm-100 hover:bg-sensara-warm-200 text-sensara-forest-800 border border-sensara-border rounded-lg py-1.5 transition-colors"
                     >
                       ✓ Acknowledge Alert
@@ -257,11 +267,18 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote }: Even
                         className="flex-1 text-xs bg-white text-sensara-forest-900 rounded-lg px-2 py-1.5 border border-sensara-border focus:outline-none focus:ring-1 focus:ring-sensara-forest-500"
                       />
                       <button
-                        onClick={() => {
+                        disabled={pendingId === event._id}
+                        onClick={async () => {
                           const note = noteText[event._id!]?.trim();
                           if (note && event._id) {
-                            onAddNote(event._id, event.residentId, note);
-                            setNoteText((prev) => ({ ...prev, [event._id!]: "" }));
+                            setPendingId(event._id);
+                            setActionMessage(null);
+                            try {
+                              await onAddNote(event._id, event.residentId, note);
+                              setNoteText(prev => ({ ...prev, [event._id!]: "" }));
+                              setActionMessage("Note saved.");
+                            } catch { setActionMessage("Could not save note. Please try again."); }
+                            finally { setPendingId(null); }
                           }
                         }}
                         className="text-xs bg-sensara-forest-700 hover:bg-sensara-forest-600 text-white rounded-lg px-2.5 py-1.5 transition-colors"

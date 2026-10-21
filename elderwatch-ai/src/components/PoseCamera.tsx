@@ -130,7 +130,7 @@ export default function PoseCamera({
     const { nx } = toNormalized(e.clientX, e.clientY);
     const dx = nx - drag.startNX;  // positive = moved right in display
     const s = drag.startZone;
-    let z = { ...s };
+    const z = { ...s };
 
     switch (drag.handle) {
       case "left":  z.width = s.width - dx; break;                          // display-left = raw right boundary
@@ -319,7 +319,8 @@ export default function PoseCamera({
       const chipLabel = severity.toUpperCase();
       ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.beginPath();
-      ctx.roundRect?.(8, 8, 110, 28, 6) ?? ctx.fillRect(8, 8, 110, 28);
+      if (ctx.roundRect) ctx.roundRect(8, 8, 110, 28, 6);
+      else ctx.rect(8, 8, 110, 28);
       ctx.fill();
       ctx.fillStyle = chipColor;
       ctx.font = "bold 13px monospace";
@@ -359,7 +360,7 @@ export default function PoseCamera({
     if (status === "idle") {
       return (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900/70">
-          <p className="text-gray-400 text-sm">Initializing…</p>
+          <p className="text-gray-400 text-sm">Camera inactive</p>
         </div>
       );
     }

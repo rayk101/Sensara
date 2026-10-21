@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { ResidentProfile } from "@/lib/types";
+import type { ResidentProfile, SafetyEvent } from "@/lib/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AudioMonitor — Listens via microphone, sends 6-second audio chunks to
@@ -31,10 +31,7 @@ interface AudioClassification {
 export interface AudioMonitorProps {
   resident: ResidentProfile | null;
   isPaused?: boolean;
-  /** Called when urgent/assist audio event detected — triggers clip recording */
-  onCriticalAudioDetected?: () => void;
-  /** Injects a demo event into the live timeline */
-  onInjectDemoEvent?: (eventType: string, severity: string) => void;
+  onEventSaved?: (event: SafetyEvent) => void;
   /** Exposes mic stream so video recorder can blend audio into clips */
   onMicStream?: (stream: MediaStream | null) => void;
 }
@@ -44,8 +41,7 @@ const CHUNK_DURATION_MS = 6000; // 6-second analysis windows
 export default function AudioMonitor({
   resident,
   isPaused = false,
-  onCriticalAudioDetected,
-  onInjectDemoEvent,
+  onEventSaved,
   onMicStream,
 }: AudioMonitorProps) {
   const [micStatus, setMicStatus] = useState<MicStatus>("idle");
@@ -63,14 +59,13 @@ export default function AudioMonitor({
 
   const residentRef = useRef(resident);
   const isPausedRef = useRef(isPaused);
-  const onCriticalRef = useRef(onCriticalAudioDetected);
-  const onInjectRef = useRef(onInjectDemoEvent);
+  const onEventRef = useRef(onEventSaved);
+  const requestGenerationRef = useRef(0);
   const onMicStreamRef = useRef(onMicStream);
 
   useEffect(() => { residentRef.current = resident; }, [resident]);
   useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
-  useEffect(() => { onCriticalRef.current = onCriticalAudioDetected; }, [onCriticalAudioDetected]);
-  useEffect(() => { onInjectRef.current = onInjectDemoEvent; }, [onInjectDemoEvent]);
+  useEffect(() => { onEventRef.current = onEventSaved; }, [onEventSaved]);
   useEffect(() => { onMicStreamRef.current = onMicStream; }, [onMicStream]);
 
   // Check ElevenLabs status on mount
@@ -84,18 +79,14 @@ export default function AudioMonitor({
   // ── Send a completed audio chunk to the API ──────────────────────────────────
   const sendChunk = useCallback(async (blob: Blob) => {
     const currentResident = residentRef.current;
-    console.log("[AudioMonitor] Chunk ready — size:", blob.size, "bytes");
 
     if (!currentResident) {
-      console.log("[AudioMonitor] No resident selected — skipping analysis");
       return;
     }
     if (blob.size < 500) {
-      console.log("[AudioMonitor] Chunk too small — skipping");
       return;
     }
     if (isPausedRef.current) {
-      console.log("[AudioMonitor] Paused — skipping analysis");
       return;
     }
 
@@ -109,10 +100,9 @@ export default function AudioMonitor({
 
       const res = await fetch("/api/audio/analyze", { method: "POST", body: form });
       const data = await res.json();
-      console.log("[AudioMonitor] API response:", data);
+      if (!res.ok) throw new Error(data.error ?? "Audio analysis unavailable");
 
       if (data.elevenLabsDisabled) {
-        console.log("[AudioMonitor] ElevenLabs not configured");
       } else {
         if (data.transcript) {
           setLastTranscript(data.transcript || "(no speech)");
@@ -120,16 +110,10 @@ export default function AudioMonitor({
         if (data.classification) {
           setLastClassification(data.classification);
         }
-        if (data.shouldRecordCriticalClip) {
-          console.log("[AudioMonitor] Critical event — triggering clip recording");
-          onCriticalRef.current?.();
-          if (data.classification) {
-            onInjectRef.current?.(data.classification.eventType, data.classification.severity);
-          }
-        }
+        if (data.event) onEventRef.current?.(data.event);
       }
     } catch (err) {
-      console.warn("[AudioMonitor] API call failed:", err);
+      setErrorMsg(err instanceof Error ? err.message : "Audio analysis failed");
     } finally {
       if (isListeningRef.current) setMicStatus("listening");
     }
@@ -163,7 +147,7 @@ export default function AudioMonitor({
 
     recorder.onstop = () => {
       const blob = new Blob(chunkData, { type: mimeType || "audio/webm" });
-      sendChunk(blob); // non-blocking
+      if (isListeningRef.current && !isPausedRef.current) void sendChunk(blob);
 
       // Schedule next chunk immediately after stop (100ms gap for stability)
       if (isListeningRef.current) {
@@ -176,7 +160,6 @@ export default function AudioMonitor({
     };
 
     recorder.start();
-    console.log("[AudioMonitor] Recording chunk started (mimeType:", mimeType || "default", ")");
 
     // Stop after CHUNK_DURATION_MS to trigger onstop
     chunkTimerRef.current = setTimeout(() => {
@@ -195,9 +178,9 @@ export default function AudioMonitor({
       return;
     }
 
+    const generation = ++requestGenerationRef.current;
     setMicStatus("requesting");
     setErrorMsg(null);
-    console.log("[AudioMonitor] Requesting microphone permission…");
 
     try {
       const micStream = await navigator.mediaDevices.getUserMedia({
@@ -209,7 +192,10 @@ export default function AudioMonitor({
         video: false,
       });
 
-      console.log("[AudioMonitor] Microphone permission granted");
+      if (generation !== requestGenerationRef.current || isPausedRef.current) {
+        micStream.getTracks().forEach(track => track.stop());
+        return;
+      }
       streamRef.current = micStream;
       isListeningRef.current = true;
       onMicStreamRef.current?.(micStream);
@@ -231,7 +217,7 @@ export default function AudioMonitor({
 
   // ── Stop listening ────────────────────────────────────────────────────────────
   const stopListening = useCallback(() => {
-    console.log("[AudioMonitor] Stopping audio monitor");
+    requestGenerationRef.current++;
     isListeningRef.current = false;
 
     if (chunkTimerRef.current !== null) {
@@ -248,6 +234,8 @@ export default function AudioMonitor({
     setMicStatus("idle");
   }, []);
 
+  useEffect(() => { if (isPaused) stopListening(); }, [isPaused, stopListening]);
+
   // Stop on unmount
   useEffect(() => () => stopListening(), [stopListening]);
 
@@ -256,7 +244,6 @@ export default function AudioMonitor({
     const currentResident = residentRef.current;
     if (!currentResident) return;
     setSimulating(true);
-    console.log("[AudioMonitor] Simulating audio distress");
     try {
       const res = await fetch("/api/audio/analyze", {
         method: "POST",
@@ -269,17 +256,12 @@ export default function AudioMonitor({
         }),
       });
       const data = await res.json();
-      console.log("[AudioMonitor] Simulate response:", data);
+      if (!res.ok) throw new Error(data.error ?? "Audio analysis unavailable");
       if (data.transcript) setLastTranscript(data.transcript);
       if (data.classification) setLastClassification(data.classification);
-      if (data.shouldRecordCriticalClip) {
-        onCriticalRef.current?.();
-        if (data.classification) {
-          onInjectRef.current?.(data.classification.eventType, data.classification.severity);
-        }
-      }
+      if (data.event) onEventRef.current?.(data.event);
     } catch (err) {
-      console.warn("[AudioMonitor] Simulate failed:", err);
+      setErrorMsg("Could not save simulated audio event. Please try again.");
     } finally {
       setSimulating(false);
     }
@@ -383,7 +365,7 @@ export default function AudioMonitor({
       {lastTranscript && (
         <div className="bg-sensara-warm-100 border border-sensara-divider rounded-lg px-3 py-2">
           <p className="text-[10px] text-sensara-warm-500 mb-0.5">Last Transcript</p>
-          <p className="text-xs text-sensara-forest-800 italic">"{lastTranscript}"</p>
+          <p className="text-xs text-sensara-forest-800 italic">&ldquo;{lastTranscript}&rdquo;</p>
         </div>
       )}
 
@@ -406,7 +388,7 @@ export default function AudioMonitor({
             <div className="flex flex-wrap gap-1 mt-1.5">
               {lastClassification.matchedKeywords.map((kw) => (
                 <span key={kw} className="bg-black/10 rounded-full px-1.5 py-0.5 text-[9px]">
-                  "{kw}"
+                  &ldquo;{kw}&rdquo;
                 </span>
               ))}
               {lastClassification.matchedAudioTags.map((tag) => (

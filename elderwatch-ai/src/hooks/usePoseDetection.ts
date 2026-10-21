@@ -1,18 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PoseLandmark } from "@/lib/types";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// usePoseDetection — MediaPipe Pose Landmarker + Webcam Integration Hook
-//
-// Manages the full lifecycle:
-//   1. Request webcam access
-//   2. Lazily initialize MediaPipe PoseLandmarker from CDN
-//   3. Run detectForVideo() in a requestAnimationFrame loop
-//   4. Expose current landmarks, visibility status, and references to the
-//      video/canvas elements for rendering
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type PoseStatus = "idle" | "loading" | "running" | "no-webcam" | "error";
 
@@ -25,171 +15,112 @@ export interface PoseDetectionResult {
   stream: MediaStream | null;
 }
 
-const MEDIAPIPE_WASM =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const MEDIAPIPE_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
-export function usePoseDetection(): PoseDetectionResult {
+export function usePoseDetection(enabled = true): PoseDetectionResult {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const poseLandmarkerRef = useRef<unknown>(null);
-  const animFrameRef = useRef<number>(0);
-  const lastVideoTimeRef = useRef<number>(-1);
-  const streamRef = useRef<MediaStream | null>(null);
-
   const [landmarks, setLandmarks] = useState<PoseLandmark[] | null>(null);
   const [status, setStatus] = useState<PoseStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
-  // ─── Initialize MediaPipe and webcam ───────────────────────────────────────
   useEffect(() => {
+    setLandmarks(null);
+    setStream(null);
+    setErrorMessage(null);
+    if (!enabled) {
+      setStatus("idle");
+      return;
+    }
+
     let cancelled = false;
+    let camera: MediaStream | null = null;
+    let detector: PoseLandmarker | null = null;
+    let frame = 0;
+    let lastVideoTime = -1;
+    const video = videoRef.current;
+
+    const release = () => {
+      cancelAnimationFrame(frame);
+      camera?.getTracks().forEach(track => track.stop());
+      detector?.close();
+      detector = null;
+      if (video?.srcObject === camera) video.srcObject = null;
+    };
 
     async function init() {
       setStatus("loading");
-
-      // 1. Request webcam
-      let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" },
-          audio: false,
+        camera = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" }, audio: false,
         });
-      } catch (err) {
+      } catch {
         if (!cancelled) {
           setStatus("no-webcam");
-          setErrorMessage(
-            "Webcam access denied or unavailable. Please allow camera access and refresh."
-          );
+          setErrorMessage("Camera unavailable. Allow camera access, then switch away and back to retry.");
         }
         return;
       }
-
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-
-      streamRef.current = stream;
-      setStream(stream);
-      const video = videoRef.current;
-      if (!video) return;
-
-      video.srcObject = stream;
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => {
-          video.play().then(resolve).catch(resolve);
-        };
-      });
-
-      // Resize canvas to match video
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-      }
-
-      // 2. Load MediaPipe dynamically (avoids SSR issues)
-      let PoseLandmarker: unknown, FilesetResolver: unknown;
+      if (cancelled || !video) { release(); return; }
       try {
-        const mp = await import("@mediapipe/tasks-vision");
-        PoseLandmarker = mp.PoseLandmarker;
-        FilesetResolver = mp.FilesetResolver;
-      } catch (err) {
-        if (!cancelled) {
-          setStatus("error");
-          setErrorMessage("Failed to load MediaPipe. Check your network connection.");
-        }
-        return;
-      }
-
-      if (cancelled) return;
-
-      // 3. Create the pose landmarker
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const vision = await (FilesetResolver as any).forVisionTasks(MEDIAPIPE_WASM);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        poseLandmarkerRef.current = await (PoseLandmarker as any).createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: MODEL_URL,
-            delegate: "GPU",
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
+        video.srcObject = camera;
+        await video.play();
+        if (cancelled) { release(); return; }
+        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
+        const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+        if (cancelled) { release(); return; }
+        const create = (delegate: "GPU" | "CPU") => PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate },
+          runningMode: "VIDEO", numPoses: 1,
+          minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
-      } catch (err) {
-        // GPU delegate may fail on some browsers — retry with CPU
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const vision = await (FilesetResolver as any).forVisionTasks(MEDIAPIPE_WASM);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          poseLandmarkerRef.current = await (PoseLandmarker as any).createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-            runningMode: "VIDEO",
-            numPoses: 1,
-          });
-        } catch (retryErr) {
-          if (!cancelled) {
-            setStatus("error");
-            setErrorMessage("Failed to initialize pose detection model.");
+        try { detector = await create("GPU"); }
+        catch (error) {
+          if (cancelled) return;
+          detector = await create("CPU");
+        }
+        if (cancelled) { release(); return; }
+        const canvas = canvasRef.current;
+        if (canvas) {
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+        }
+        setStream(camera);
+        setStatus("running");
+        const loop = () => {
+          if (cancelled || !detector) return;
+          if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+            lastVideoTime = video.currentTime;
+            try {
+              const result = detector.detectForVideo(video, performance.now());
+              setLandmarks(result.landmarks[0] ?? null);
+            } catch (error) {
+              release();
+              setStream(null);
+              setLandmarks(null);
+              setStatus("error");
+              setErrorMessage("Pose detection stopped. Switch away and back to retry.");
+              return;
+            }
           }
-          return;
+          frame = requestAnimationFrame(loop);
+        };
+        frame = requestAnimationFrame(loop);
+      } catch {
+        release();
+        if (!cancelled) {
+          setStream(null);
+          setStatus("error");
+          setErrorMessage("Could not load pose detection. Check your network connection and retry.");
         }
       }
-
-      if (cancelled) return;
-      setStatus("running");
-      startLoop();
     }
-
-    init();
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(animFrameRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      poseLandmarkerRef.current = null;
-    };
-  }, []);
-
-  // ─── Frame detection loop ──────────────────────────────────────────────────
-  const startLoop = useCallback(() => {
-    function loop() {
-      const video = videoRef.current;
-      const landmarker = poseLandmarkerRef.current;
-
-      if (!video || !landmarker || video.readyState < 2) {
-        animFrameRef.current = requestAnimationFrame(loop);
-        return;
-      }
-
-      const now = performance.now();
-      if (video.currentTime !== lastVideoTimeRef.current) {
-        lastVideoTimeRef.current = video.currentTime;
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const results = (landmarker as any).detectForVideo(video, now);
-          if (results.landmarks && results.landmarks.length > 0) {
-            // MediaPipe returns normalized landmarks; cast to our PoseLandmark type
-            setLandmarks(results.landmarks[0] as PoseLandmark[]);
-          } else {
-            setLandmarks(null);
-          }
-        } catch {
-          // Frame processing error — skip silently
-        }
-      }
-
-      animFrameRef.current = requestAnimationFrame(loop);
-    }
-    animFrameRef.current = requestAnimationFrame(loop);
-  }, []);
+    void init();
+    return () => { cancelled = true; release(); };
+  }, [enabled]);
 
   return { landmarks, videoRef, canvasRef, status, errorMessage, stream };
 }

@@ -35,6 +35,5 @@ export async function seedNotes(): Promise<void> {
   const col = db.collection(COLLECTION);
   const existing = await col.countDocuments();
   if (existing > 0) return;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await col.insertMany(MOCK_NOTES as any);
+  await db.collection<CaregiverNote>(COLLECTION).insertMany(MOCK_NOTES);
 }
