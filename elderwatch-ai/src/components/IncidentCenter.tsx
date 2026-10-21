@@ -28,7 +28,7 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
   const eventKey = events.map(e => `${e._id}:${e.acknowledged}:${e.status}`).join("|");
   useEffect(() => {
     if (!audioEnabled || processing.current) return;
-    const event = events.find(e => e._id && e.severity === "urgent" && !e.acknowledged && !["resolved", "dismissed"].includes(e.status ?? "") && !seen.current.has(e._id));
+    const event = events.find(e => e._id && e.severity === "urgent" && e.workflow?.voice.status !== "not_requested" && !e.acknowledged && !["resolved", "dismissed"].includes(e.status ?? "") && !seen.current.has(e._id));
     if (!event?._id) return;
     const id = event._id;
     let disposed = false;
@@ -53,13 +53,14 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
         const url = URL.createObjectURL(await response.blob());
         if (disposed) { URL.revokeObjectURL(url); return; }
         const audio = audioRef.current ?? new Audio(); audioRef.current = audio; audio.src = url;
+        let finished = false;
         try {
           await new Promise<void>((resolve, reject) => {
-            audio.onended = () => { void report("played"); localStorage.setItem(`sensara-spoken:${id}`, "completed"); setVoiceStatus("Playback completed"); resolve(); };
-            audio.onerror = () => { void report("playback_failed"); reject(new Error("Audio playback failed")); };
+            audio.onended = () => { finished = true; void report("played"); localStorage.setItem(`sensara-spoken:${id}`, "completed"); setVoiceStatus("Playback completed"); resolve(); };
+            audio.onerror = () => { finished = true; void report("playback_failed"); reject(new Error("Audio playback failed")); };
             const attemptPlay = () => { void audio.play().then(() => { manualPlayRef.current = null; void report("playing"); setVoiceStatus(`Playing alert for ${event.residentName}`); }).catch(() => { void report("blocked"); setVoiceStatus("Audio blocked. Select Play blocked alert."); manualPlayRef.current = attemptPlay; }); };
             attemptPlay();
-            controller.signal.addEventListener("abort", () => { audio.pause(); void report("interrupted"); reject(new Error("Playback interrupted")); }, { once: true });
+            controller.signal.addEventListener("abort", () => { if (finished) return; audio.pause(); void report("interrupted"); reject(new Error("Playback interrupted")); }, { once: true });
           });
         } finally { manualPlayRef.current = null; audio.onended = null; audio.onerror = null; URL.revokeObjectURL(url); }
       };

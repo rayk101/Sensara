@@ -112,7 +112,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     }
     const prior = getInMemoryStore().getRecentEvents(100000).find(e => e.activeEpisodeKey === activeEpisodeKey);
     const closed = getInMemoryStore().getRecentEvents(100000).find(e => e.residentId === residentId && episodeCategory(e.eventType) === episodeCategory(event.eventType) && e.resolvedAt && (e.resolvedAt >= detectedAt || !rearmed(latest, e.resolvedAt)));
-    if (closed) throw new ApiError(409, "Delayed observation for a closed episode");
+    if (closed && !prior) throw new ApiError(409, "Delayed observation for a closed episode");
     let saved: SafetyEvent;
     if (prior) { const update = merge(prior); if (Object.keys(update).length) { Object.assign(prior, update); prior.version = (prior.version ?? 0) + 1; prior.stateHistory?.push({ status: "urgent", at: now, by: currentActor().id }); } saved = prior; }
     else saved = await createSafetyEvent(event);
@@ -144,9 +144,9 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
         return null;
       }
       const col = db.collection("safety_events");
-      const closed = await col.findOne({ residentId, episodeCategory: episodeCategory(event.eventType), resolvedAt: { $type: "string" } }, { session, sort: { resolvedAt: -1 } });
-      if (closed && (closed.resolvedAt >= detectedAt || !rearmed(latest, closed.resolvedAt))) throw new ApiError(409, "Delayed observation for a closed episode");
       const prior = await col.findOne({ activeEpisodeKey }, { session });
+      const closed = await col.findOne({ residentId, episodeCategory: episodeCategory(event.eventType), resolvedAt: { $type: "string" } }, { session, sort: { resolvedAt: -1 } });
+      if (!prior && closed && (closed.resolvedAt >= detectedAt || !rearmed(latest, closed.resolvedAt))) throw new ApiError(409, "Delayed observation for a closed episode");
       const id = prior?._id ?? new ObjectId();
       if (prior) {
         const update = merge(prior as unknown as SafetyEvent);

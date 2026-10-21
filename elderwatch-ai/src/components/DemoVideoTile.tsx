@@ -136,7 +136,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
         const response = await fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ residentId: config.residentId, source: "multi_feed_demo", sessionId, scenarioId: config.id, videoTime: videoRef.current?.currentTime ?? 0, sourceEventId: crypto.randomUUID(), detectedAt: new Date().toISOString() }) });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Observation could not be saved");
-        if (!stopped && body.event) setSavedEvent(body.event);
+        if (!stopped) { if (body.event) setSavedEvent(body.event); setSaveMsg(null); }
       } catch (error) { if (!stopped) setSaveMsg(error instanceof Error ? error.message : "Persistence unavailable"); }
     };
     void observe(); const timer = setInterval(() => { void observe(); }, 3000);

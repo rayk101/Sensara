@@ -162,8 +162,10 @@ test("closed camera episodes require normal evidence before rearming; refresh ca
   await submitDetection({ ...normal, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   t.mock.timers.tick(6000);
   await submitDetection({ ...normal, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
+  const watching = await submitIncident({ ...refresh, signals: { ...normal.signals, postureAngle: 45, secondsBadPosture: 4 }, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
+  assert.equal(watching.severity, "watch");
   const next = await submitIncident({ ...refresh, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
-  assert.notEqual(next._id, event._id);
+  assert.notEqual(next._id, event._id); assert.equal(next._id, watching._id); assert.equal(next.severity, "urgent");
 });
 
 test("closing one incident preserves another urgent priority and audit identities", async () => {
@@ -193,4 +195,24 @@ test("browser playback is per device and delayed callbacks cannot regress comple
   assert.equal(memory("notifications").get(key)?.status, "played");
   await assert.rejects(recordVoicePlayback(event._id!, "played", "unregistered-device"));
   delete process.env.ELEVENLABS_API_KEY; delete process.env.ELEVENLABS_VOICE_ID;
+});
+
+test("video and voice failure leave the incident open and allow messaging to succeed independently", async t => {
+  const { updateVideoState } = await import("../src/lib/platform/workflows");
+  const { incidentSpeech } = await import("../src/lib/platform/voice");
+  const { body, patient } = await fixture();
+  memory("notifications").clear();
+  await updateSettings({ notificationsEnabled: true, voiceEnabled: true });
+  await saveCaregiver({ id: "isolation-recipient", name: "Fictional caregiver", channel: "imessage", destination: "+15551234567", patientIds: [patient.id], active: true, urgentAlerts: true });
+  const event = await submitIncident(body);
+  await updateVideoState(event._id!, "failed", "Synthetic S3 outage");
+  process.env.ELEVENLABS_API_KEY = "test-only"; process.env.ELEVENLABS_VOICE_ID = "test-only";
+  t.after(() => { delete process.env.ELEVENLABS_API_KEY; delete process.env.ELEVENLABS_VOICE_ID; });
+  t.mock.method(globalThis, "fetch", async () => new Response("rejected", { status: 403 }));
+  await assert.rejects(incidentSpeech(event._id!));
+  await processNotifications(async () => "mock-accepted");
+  assert.equal(event.status, "open"); assert.equal(event.workflow?.video.status, "failed");
+  const notices = (await listNotifications()).filter(n => n.eventId === event._id);
+  assert.equal(notices.find(n => n.channel === "voice")?.status, "failed");
+  assert.equal(notices.find(n => n.channel === "imessage")?.status, "accepted");
 });

@@ -1,0 +1,169 @@
+Sensara verification report — 2026-10-21
+
+Result
+The application is running locally at http://127.0.0.1:3002, with monitoring
+paused until the user supplies consent and resumes it. The production build,
+lint, TypeScript checks and all 43 automated tests pass. This is a tested demo,
+not a production-readiness or clinical-reliability certification. The complete
+requested end-to-end acceptance criterion remains blocked by Photon delivery;
+additional coverage and operational work are listed explicitly below.
+
+What was implemented
+- Preserved the existing four-feed and live-camera interfaces and detection
+  criteria. Fixed the pose/render update loop and camera resource cleanup.
+- Added one authenticated server incident service used by the four scripted
+  scenarios, camera observations, audio observations and manual events.
+- Persisted patient records, sessions, observations, incident response/audit,
+  staff assignments, preferences, video metadata and notification outcomes.
+- Validated patient/session/source association, event ordering and retries.
+  Unique MongoDB indexes and transactions enforce ingestion/episode/action
+  deduplication. Incidents include workflow intents atomically with escalation.
+- Separated observed severity, monitoring health, incident response and
+  supporting integration progress. Acknowledgment retains urgency; closure
+  requires an authorized actor and reason. Old events cannot reopen closure.
+- Added a persistent Node worker with MongoDB claims, recoverable leases,
+  bounded retries and explicit uncertain outcomes. Voice and messages start
+  independently of video. Reminders remain disabled.
+- Added signed staff sessions, admin/caregiver/viewer access and patient scope.
+  Local fictional demo access is loopback-only and disabled on Railway.
+- Added private S3 uploads with size/type/ownership checks, immutable object
+  upload, server-side ffmpeg decoding, actual media-duration verification,
+  incident linking and short-lived authorized retrieval.
+- Retained the documented 15-second post-event recording fallback. Partial
+  captures are labeled; no pre-event footage is claimed. Patient switching
+  cannot relabel an existing recording. Microphone access requires consent.
+- Connected real ElevenLabs TTS, private audio caching, explicit audio enable,
+  playback queue, blocked-audio control, per-device outcomes and browser locks.
+  Fixed a completed-playback cleanup race and protected the persisted terminal
+  playback result from delayed interruption callbacks.
+- Connected Photon iMessage with assigned recipients and durable outcomes;
+  optional conventional SMS/email adapters remain unconfigured.
+- Added migrations, deployment/configuration documentation and CI checks.
+  Railway Docker configuration replaces the Vercel deployment dependency.
+  Provider secrets remain in the ignored private .env.local file (mode 0600).
+
+Automated tests — passed, using isolated memory and mocked provider transports
+43 tests cover the original scenario thresholds/identity, pose frame render
+regression, permission denial, late camera acquisition after patient switching,
+partial recording and original-patient association, state transitions,
+deduplication, rearming, out-of-order evidence, scoped access, session checks,
+patient CRUD, notification outbox/retries/uncertainty, upload input validation,
+voice failure, per-device playback updates and integration failure isolation.
+These mocked results are not evidence of real provider delivery.
+Commands: npm run check; npm run build. Both passed on the final source build.
+git diff --check passed.
+
+Real-service verification — performed with explicit opt-in and fictional data
+MongoDB Atlas: PASSED
+- Used separate database sensara_verification_20261021.
+- Applied validators/indexes; created, read, updated and deactivated a patient.
+- Persisted the actual four scenario identities and outcomes. Stable creates
+  no incident; wandering remains watching under the repository's rules.
+- Concurrent duplicate requests and four independent Node processes produced
+  one incident. Concurrent acknowledgments retained one authoritative state.
+- Verified transaction rollback, expired lease handling and stale-worker write
+  protection in real Atlas, with mocked messaging for worker recovery checks.
+- A new process read saved history, acknowledgment/resolution and audit after
+  restart. Browser refresh retained unresolved urgent priority while paused.
+
+S3: PASSED
+- Uploaded one synthetic 15-second MP4 into the private sensara bucket.
+- Verified incident/patient metadata, byte-identical authorized download,
+  anonymous denial (403) and overwrite rejection (412).
+- Fully decoded the stored video with ffmpeg; measured 14.93 seconds of media
+  output for the nominal 15-second clip, within the documented tolerance.
+- Opened the actual stored clip in Chrome and observed playback progressing
+  without a media error. No real patient footage was uploaded for this test.
+
+ElevenLabs: PASSED generation; PASSED browser playback
+- Saved the explicitly approved TTS permission on the existing sensara key,
+  retaining STT access and the 10,000-credit limit.
+- Generated one fictional spoken alert (121,251 audio bytes) using the real
+  provider, then cached it privately in S3.
+- Chrome reached the actual playback-ended event. After discovering the
+  cleanup race, reused the same generated audio for the new fictional fall
+  episode, with no second TTS generation. The retest's PLAYED outcome survived
+  disabling audio, refreshing and an independent Atlas read.
+- The original resolved incident and its evidence/audit were preserved; it was
+  not reopened to perform the playback retest. Completion does not establish
+  that a caregiver heard or understood the alert.
+- Speech-to-text had been verified on synthetic audio in the preceding
+  integration setup; this final pass did not repeat a live transcription.
+
+Photon: FAILED provider acceptance; NOT VERIFIED device delivery
+- The single approved test targeted the enrolled number ending 0558.
+- Photon returned "Target not allowed for this project". No provider message
+  ID or delivery evidence was obtained. Failure is stored and surfaced.
+- Photon debug reported an iMessage address ending 5972. The user states that
+  is not their number, and confirmed 0558 is selected for both receiving and
+  starting iMessage conversations in iPhone settings.
+- Kept 0558 configured. Did not authorize, enroll or send to 5972. Did not
+  silently substitute SMS or claim that iMessage was delivered.
+- Provider account/identity reconciliation is still required. Suggested support
+  facts: enrolled verified recipient ends 0558; send rejected as target not
+  allowed; debug sender ends 5972; user denies owning it; iPhone selections
+  verified. No support message has been sent on the user's behalf.
+
+Independent workflow timing: PASSED controlled live test
+Voice generation and the Photon attempt ran independently and completed before
+the synthetic 15-second recording interval/upload branch. The rejected message
+did not prevent successful voice generation or S3 upload.
+
+HTTP and browser verification: PASSED checks described here
+- Real local production server health and Atlas-backed reads, invalid inputs,
+  cross-origin write rejection and all four demo video assets.
+- Separate HTTP test with local bypass disabled verified sign-in, signed
+  cookies, tamper rejection, patient scoping and role-based write denial.
+- Four prerecorded feeds ran together against the isolated database. Eleanor
+  and Daniel escalated; Margaret remained watching; Robert remained normal.
+- A newly rearmed watching episode now promotes despite an older closed
+  incident. This browser-discovered bug has an automated regression assertion.
+- Acknowledgment left an incident urgent. Inline reason-based resolution
+  worked; its actor/reason audit and clip association survived refresh/restart.
+
+What remains unverified or incomplete
+1. Photon acceptance and actual iMessage delivery are externally blocked.
+   No delivery webhook/status reconciliation is implemented for this account;
+   the app never equates acceptance with delivered. Conventional SMS and email
+   have not been live-tested because their providers are not configured.
+2. Railway deployment, Docker execution on Railway, multi-host load behavior,
+   production staff provisioning and operational monitoring are unverified.
+3. No new physical-camera fall or dangerous demonstration was requested.
+   Actual hardware unplug, every camera/codec combination, browser autoplay
+   blocking, multiple physical workstations and full network-outage scenarios
+   have not all been exercised live. Permission/resource/recording failures
+   have automated coverage, but not the entire requested browser failure matrix.
+4. The real provider test used one fictional fall. All four original scenarios
+   have automated and Atlas/browser checks, but separate real video/voice/
+   delivery runs for every scenario and a complete live-camera urgent episode
+   have not been performed. Stable/watching scenarios correctly do not issue
+   urgent notifications under their original rules.
+5. Browser-owned recording cannot recover footage lost before upload when a
+   tab closes. Client completion retries exist, but persistent browser blob
+   recovery, automatic reconciliation of uploaded-but-unlinked objects and a
+   server timeout for a capture request that never reaches the browser remain
+   implementation work. Such captures must not be treated as available.
+6. S3 access expiry is enforced, but physical deletion/lifecycle and bucket
+   access logging are not configured by the current limited IAM user. No
+   production retention/deletion policy or ingestion-data archival job exists.
+7. Privacy agreements, organizational authorization, clinical validation,
+   comprehensive security/load review and real patient use are not approved or
+   established. Demonstration success does not establish patient safety.
+
+Artifacts and reproducibility
+Root README.md contains setup, migration, configuration and Railway commands.
+Manual live scripts under elderwatch-ai/scripts refuse non-verification DBs.
+They are not part of CI; rerunning provider tests requires explicit approval.
+Relevant scripts: live-database-check.ts, live-provider-check.ts,
+live-recovery-check.ts, live-concurrency-check.ts, live-final-check.ts and
+auth-http-check.mjs. The final check depends on this run's fictional fixtures;
+its --prepare-cached-playback flag reuses the existing audio, not a provider
+call. The production smoke check is read-only: npm run test:smoke.
+
+Screenshots saved locally:
+/private/tmp/sensara-live-playback.png
+/private/tmp/sensara-acknowledged-urgent.png
+/private/tmp/sensara-resolved-verification.png
+/private/tmp/sensara-four-scenarios.png
+/private/tmp/sensara-playback-completed.png
+/private/tmp/sensara-local-ready.png

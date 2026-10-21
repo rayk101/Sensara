@@ -137,6 +137,7 @@ function VideoClipModal({
 }
 
 export default function EventTimeline({ events, onAcknowledge, onAddNote, onResolve, onDismiss }: EventTimelineProps) {
+  const [closureReason, setClosureReason] = useState<Record<string, string>>({});
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -184,7 +185,7 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
                     </span>
                     {event.acknowledged && (
                       <span className="text-[10px] bg-green-100 text-green-700 border border-green-300 rounded-full px-1.5 py-0.5">
-                        ✓ Acknowledged
+                        {event.status === "resolved" ? "Resolved" : event.status === "dismissed" ? "Dismissed" : "✓ Acknowledged"}
                       </span>
                     )}
                     {event.source === "audio_monitor" && (
@@ -239,13 +240,21 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
                     </button>
                   )}
 
+                  {event.workflow && <div className="rounded border p-2 text-xs" aria-label="Integration progress">
+                    <p>Video: {event.workflow.video.status.replace(/_/g, " ")}{event.workflow.video.error ? ` — ${event.workflow.video.error}` : ""}</p>
+                    <p>Voice generation: {event.workflow.voice.status.replace(/_/g, " ")}{event.workflow.voice.error ? ` — ${event.workflow.voice.error}` : ""}</p>
+                    <p>Messaging intent: {event.workflow.messaging.status === "configuration_failed" ? "No authorized recipient configured" : event.workflow.messaging.status.replace(/_/g, " ")}. Recipient outcomes are listed above.</p>
+                  </div>}
                   <p className="text-xs">Response: {event.status ?? (event.acknowledged ? "acknowledged" : "open")}</p>
-                  {!["resolved", "dismissed"].includes(event.status ?? "") && <div className="flex gap-2">
-                    {event.acknowledged && onResolve && <button className="rounded border px-2 py-1 text-xs" onClick={async () => { const reason = window.prompt("Reason for resolving this incident:"); if (!reason) return; try { await onResolve(event._id!, reason); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Resolution failed"); } }}>Resolve</button>}
-                    {onDismiss && <button className="rounded border px-2 py-1 text-xs" onClick={async () => { const reason = window.prompt("Reason for dismissing this incident:"); if (!reason) return; try { await onDismiss(event._id!, reason); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Dismissal failed"); } }}>Dismiss</button>}
+                  {!["resolved", "dismissed"].includes(event.status ?? "") && (onResolve || onDismiss) && <div className="space-y-2">
+                    <label className="block text-xs">Closure reason<input className="mt-1 block w-full rounded border p-2" maxLength={2000} value={closureReason[event._id!] ?? ""} onChange={e => setClosureReason(prev => ({ ...prev, [event._id!]: e.target.value }))} /></label>
+                    <div className="flex gap-2">
+                      {event.acknowledged && onResolve && <button disabled={!closureReason[event._id!]?.trim() || pendingId === event._id} className="rounded border px-2 py-1 text-xs disabled:opacity-40" onClick={async () => { setPendingId(event._id!); try { await onResolve(event._id!, closureReason[event._id!]); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Resolution failed"); } finally { setPendingId(null); } }}>Resolve</button>}
+                      {onDismiss && <button disabled={!closureReason[event._id!]?.trim() || pendingId === event._id} className="rounded border px-2 py-1 text-xs disabled:opacity-40" onClick={async () => { setPendingId(event._id!); try { await onDismiss(event._id!, closureReason[event._id!]); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Dismissal failed"); } finally { setPendingId(null); } }}>Dismiss</button>}
+                    </div>
                   </div>}
                   {/* Acknowledge button */}
-                  {isNonStable && !event.acknowledged && event._id && (
+                  {isNonStable && !event.acknowledged && !["resolved", "dismissed"].includes(event.status ?? "") && event._id && (
                     <button
                       disabled={pendingId === event._id}
                       onClick={async () => {

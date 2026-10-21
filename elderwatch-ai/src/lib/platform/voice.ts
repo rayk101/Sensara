@@ -104,5 +104,7 @@ export async function recordVoicePlayback(id: string, status: string, deviceId =
   const record = await readRecord("notifications", recordId);
   if (!record) throw new ApiError(409, "Generate speech before reporting playback");
   if (record.status === "played" && status !== "played") return;
-  await writeRecord("notifications", { ...record, id: recordId, playbackStatus: status, status, lastAttemptAt: new Date().toISOString() });
+  const update = { playbackStatus: status, status, lastAttemptAt: new Date().toISOString() };
+  if (isMongoEnabled()) await (await getDb()).collection("notifications").updateOne({ id: recordId, status: { $ne: "played" } }, { $set: update });
+  else await writeRecord("notifications", { ...record, id: recordId, ...update });
 }

@@ -9,7 +9,7 @@ import { getCaregivers, getSettings, type Caregiver } from "./settings";
 import { patientScope, assertPatient, ApiError } from "./auth";
 import { sendPhotonMessage } from "../photon";
 export interface NotificationRecord {
-  id: string; eventId: string; residentId: string; staffId: string; channel: Caregiver["channel"];
+  id: string; eventId: string; residentId: string; staffId: string; channel: Caregiver["channel"] | "voice";
   provider: string; status: "queued" | "submitted" | "accepted" | "delivered" | "failed" | "unknown" | "cancelled";
   attemptId?: string; attemptCount?: number; attempts?: Array<{ attemptId: string; status: string; at: string }>;
   providerMessageId: string | null; retryCount: number; createdAt: string; lastAttemptAt: string | null;
