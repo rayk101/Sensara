@@ -9,6 +9,7 @@ import {
 } from "@/lib/elevenlabs";
 import { createSafetyEvent } from "@/lib/db/events";
 import { sendUrgentEmailAlert } from "@/lib/emailAlerts";
+import { sendUrgentPhotonAlert } from "@/lib/photon";
 import type { SafetyEvent } from "@/lib/types";
 
 // GET — lightweight ElevenLabs status check
@@ -102,7 +103,7 @@ export async function POST(req: Request) {
       savedEvent = saved;
 
       if (saved.severity === "urgent") {
-        sendUrgentEmailAlert(saved as SafetyEvent).catch(() => {});
+        void Promise.allSettled([sendUrgentEmailAlert(saved), sendUrgentPhotonAlert(saved)]);
       }
     }
 

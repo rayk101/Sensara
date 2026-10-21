@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { isMongoEnabled, getDb } from "@/lib/mongodb";
 import { isS3Configured } from "@/lib/s3";
 import { isSmsConfigured } from "@/lib/sms";
+import { isPhotonConfigured } from "@/lib/photon";
 import { isEmailAlertsConfigured } from "@/lib/emailAlerts";
 
 // GET /api/status
@@ -26,6 +27,7 @@ export async function GET() {
     mongoConnected,
     s3Configured: isS3Configured(),
     smsConfigured: isSmsConfigured(),
+    photonConfigured: isPhotonConfigured(),
     emailConfigured: isEmailAlertsConfigured(),
     demoMode: !isMongoEnabled(),
   });

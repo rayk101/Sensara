@@ -102,16 +102,10 @@ export default function AudioMonitor({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Audio analysis unavailable");
 
-      if (data.elevenLabsDisabled) {
-      } else {
-        if (data.transcript) {
-          setLastTranscript(data.transcript || "(no speech)");
-        }
-        if (data.classification) {
-          setLastClassification(data.classification);
-        }
-        if (data.event) onEventRef.current?.(data.event);
-      }
+      setErrorMsg(null);
+      setLastTranscript(data.transcript || "(no speech)");
+      if (data.classification) setLastClassification(data.classification);
+      if (data.event) onEventRef.current?.(data.event);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Audio analysis failed");
     } finally {
@@ -328,7 +322,7 @@ export default function AudioMonitor({
       </div>
 
       {/* Error detail */}
-      {errorMsg && micStatus === "error" && (
+      {errorMsg && (
         <div className="bg-red-50 border border-red-300 rounded-lg px-3 py-2 text-[11px] text-red-700">
           {errorMsg}
         </div>
@@ -339,7 +333,7 @@ export default function AudioMonitor({
         {!isListening ? (
           <button
             onClick={startListening}
-            disabled={micStatus === "requesting" || micStatus === "unsupported" || isPaused}
+            disabled={micStatus === "requesting" || micStatus === "unsupported" || isPaused || !resident || !elevenLabsConfigured}
             className="flex-1 text-xs bg-green-100 hover:bg-green-200 disabled:opacity-40 disabled:cursor-not-allowed text-green-700 border border-green-300 rounded-lg py-1.5 transition-colors"
           >
             {isPaused ? "Paused" : "Start Audio Monitor"}
@@ -406,6 +400,8 @@ export default function AudioMonitor({
       )}
 
       <p className="text-[9px] text-sensara-warm-400 text-center leading-tight">
+        Starting the monitor sends microphone audio to ElevenLabs for transcription.
+        <br />
         Audio analysis is indicative only · Not for clinical use · Prototype only
       </p>
     </div>

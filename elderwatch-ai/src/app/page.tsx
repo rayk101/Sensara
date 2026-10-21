@@ -52,6 +52,9 @@ export default function Dashboard() {
   const [selectedResidentId, setSelectedResidentId] = useState<string>(MOCK_RESIDENTS[0].id);
   const [mongoConnected, setMongoConnected] = useState(false);
   const [emailConfigured, setEmailConfigured] = useState(false);
+  const [photonConfigured, setPhotonConfigured] = useState(false);
+  const [photonTestStatus, setPhotonTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [photonError, setPhotonError] = useState("");
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [isPaused, setIsPaused] = useState(false);
   const seizureDetectionEnabled = false;
@@ -106,6 +109,20 @@ export default function Dashboard() {
   );
 
   // ── Test email alert ──────────────────────────────────────────────────────
+  const handleSendTestPhoton = useCallback(async () => {
+    setPhotonTestStatus("sending");
+    setPhotonError("");
+    try {
+      const response = await fetch("/api/photon/test", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Could not send the test message.");
+      setPhotonTestStatus("sent");
+    } catch (error) {
+      setPhotonTestStatus("error");
+      setPhotonError(error instanceof Error ? error.message : "Could not send the test message.");
+    }
+  }, []);
+
   const handleSendTestEmail = useCallback(async () => {
     setEmailTestStatus("sending");
     try {
@@ -139,6 +156,7 @@ export default function Dashboard() {
       .then((d) => {
         setMongoConnected(d.mongoConnected === true);
         setEmailConfigured(d.emailConfigured === true);
+        setPhotonConfigured(d.photonConfigured === true);
       })
       .catch(() => {
         setEmailConfigured(false);
@@ -255,6 +273,21 @@ export default function Dashboard() {
 
       {/* ── Tab content ───────────────────────────────────────────────────── */}
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-5">
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
+          <span>Photon iMessage: {photonConfigured ? "Configured · urgent demo alerts enabled" : "Not configured"}</span>
+          {photonConfigured && (
+            <button
+              onClick={handleSendTestPhoton}
+              disabled={photonTestStatus === "sending"}
+              className="rounded-lg bg-sensara-forest-700 px-3 py-1.5 text-white disabled:opacity-60"
+            >
+              {photonTestStatus === "sending" ? "Sending…" : "Test iMessage"}
+            </button>
+          )}
+          <span role="status" className={photonTestStatus === "error" ? "text-red-700" : "text-sensara-forest-700"}>
+            {photonTestStatus === "sent" ? "Test message sent to Photon." : photonError}
+          </span>
+        </div>
 
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>

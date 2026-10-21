@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getRecentEvents, getEventsByResident, createSafetyEvent } from "@/lib/db/events";
 import { RECOMMENDED_ACTIONS } from "@/lib/classifySafety";
 import { sendUrgentSmsAlert } from "@/lib/sms";
+import { sendUrgentPhotonAlert } from "@/lib/photon";
 import { sendUrgentEmailAlert } from "@/lib/emailAlerts";
 import { EventType, ResidentStatus, type SafetyEvent, type SafetySignals } from "@/lib/types";
 
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
     };
     const created = await createSafetyEvent(event);
     if (created.severity === "urgent") {
-      void Promise.allSettled([sendUrgentSmsAlert(created), sendUrgentEmailAlert(created)]);
+      void Promise.allSettled([sendUrgentSmsAlert(created), sendUrgentEmailAlert(created), sendUrgentPhotonAlert(created)]);
     }
     return NextResponse.json(created, { status: 201 });
   } catch (err) {

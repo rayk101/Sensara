@@ -39,6 +39,7 @@ Sensara captures microphone input in 6-second chunks via the MediaRecorder API a
 | Video Capture | Browser MediaRecorder API |
 | Audio STT | ElevenLabs scribe_v2 |
 | SMS Alerts | Twilio Programmable Messaging |
+| iMessage Alerts | Photon Spectrum |
 | Email Alerts | Resend |
 | AI Assistant | Anthropic Claude API (claude-haiku) |
 | TTS Alerts | Web Speech API |
@@ -75,6 +76,12 @@ cp .env.local.example .env.local
 Run the copy command only if `.env.local` does not already exist; otherwise edit that file directly. The template contains no credentials.
 
 MongoDB, S3 uploads/playback, ElevenLabs transcription, Anthropic responses, Twilio SMS, and Resend email require their respective settings in `.env.local`. Configuring SMS or email enables real outgoing urgent alerts. Keep this prototype local; it does not implement authentication.
+
+## Photon iMessage alerts
+
+Set `SPECTRUM_PROJECT_ID`, `SPECTRUM_PROJECT_SECRET`, and `CAREGIVER_PHONE_NUMBER` in the private `elderwatch-ai/.env.local` file (or Railway Variables). Use an E.164 phone number and enroll that number in the Photon project's Users page. Restart the server after changing credentials. This uses Photon's hosted iMessage service; the recipient needs iMessage.
+
+The dashboard shows configuration status and a **Test iMessage** button. Urgent camera and audio events send a short demo alert directing the recipient to the dashboard; resident names, recordings, and transcripts are not included. Duplicate alerts for the same resident/event are suppressed for two minutes, and test messages are limited to once a minute. These limits are per server process and reset on restart. Delivery failures do not block event saving. Background delivery is best effort on the persistent local/Railway server, without a durable queue or retries. A successful test means Photon accepted the message, not a device delivery receipt.
 
 ## Checks
 

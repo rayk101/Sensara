@@ -56,28 +56,36 @@ export async function transcribeAudioWithElevenLabs(
   // Copy Buffer bytes into a plain ArrayBuffer to satisfy TypeScript's Blob constructor types
   const plainArrayBuffer = new Uint8Array(audioBuffer).buffer;
   const blob = new Blob([plainArrayBuffer], { type: contentType });
-  form.append("file", blob, "audio.webm");
+  const extension = contentType.includes("wav") ? "wav"
+    : contentType.includes("mp4") ? "mp4"
+    : contentType.includes("mpeg") ? "mp3"
+    : contentType.includes("ogg") ? "ogg" : "webm";
+  form.append("file", blob, `audio.${extension}`);
   form.append("model_id", "scribe_v2");
   form.append("tag_audio_events", "true");
-  form.append("timestamps_granularity", "none");
+  form.append("timestamps_granularity", "word");
 
   const res = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
     method: "POST",
     headers: { "xi-api-key": apiKey },
     body: form,
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`ElevenLabs STT error ${res.status}: ${text}`);
+    throw new Error(`ElevenLabs STT request failed (HTTP ${res.status})`);
   }
 
   const data = await res.json();
 
   const transcript: string = data.text ?? "";
-  const audioTags: string[] = (data.audio_events ?? []).map(
-    (e: { type: string }) => e.type.toLowerCase()
-  );
+  // Scribe returns non-speech sounds alongside words, with type audio_event.
+  const audioTags: string[] = [...new Set<string>(
+    (data.words ?? [])
+      .filter((word: { type: string; text?: string }) =>
+        word.type === "audio_event" && typeof word.text === "string")
+      .map((word: { text: string }) => word.text.toLowerCase().trim())
+  )];
 
   return { transcript, audioTags };
 }
