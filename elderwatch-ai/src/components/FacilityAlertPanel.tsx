@@ -160,8 +160,8 @@ export default function FacilityAlertPanel({
             <div className="w-10 h-10 rounded-full bg-green-100 border border-green-300 flex items-center justify-center mb-3">
               <span className="text-green-600 text-lg">✓</span>
             </div>
-            <p className="text-sensara-forest-700 text-sm font-medium">All residents stable</p>
-            <p className="text-sensara-warm-500 text-[10px] mt-1">No active alerts from any feed</p>
+            <p className="text-sensara-forest-700 text-sm font-medium">No current detector alerts</p>
+            <p className="text-sensara-warm-500 text-[10px] mt-1">Review saved incidents above. Monitoring may be paused.</p>
           </div>
         ) : (
           activeAlerts.map(alert => {
@@ -205,7 +205,7 @@ export default function FacilityAlertPanel({
                   <div className="flex items-center gap-1.5 text-[9px] text-sensara-warm-500 flex-wrap">
                     <span>Active {formatWaitTime(alert.alertSince)}</span>
                     <span>·</span>
-                    <span>{Math.round(alert.confidence * 100)}% conf.</span>
+                    <span>{Math.round(alert.confidence * 100)}/100 heuristic</span>
                     {isCared && <span className="text-green-600 font-medium">✓ In care</span>}
                     {isSaved && <span className="text-sensara-forest-600 font-medium">✓ Saved</span>}
                   </div>

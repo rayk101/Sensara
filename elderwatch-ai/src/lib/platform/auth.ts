@@ -61,7 +61,11 @@ export function requestActor(req: Request): Actor {
 export function checkOrigin(req: Request) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return;
   const origin = req.headers.get("origin");
-  if (req.headers.get("sec-fetch-site") === "cross-site" || (origin && origin !== new URL(req.url).origin && origin !== process.env.APP_ORIGIN)) {
+  const url = new URL(req.url);
+  const localHost = req.headers.get("host");
+  const localOrigin = localHost && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(localHost) ? `${url.protocol}//${localHost}` : null;
+  const allowed = process.env.APP_ORIGIN || url.origin;
+  if (req.headers.get("sec-fetch-site") === "cross-site" || (origin && origin !== allowed && !(process.env.LOCAL_DEMO_MODE === "true" && !process.env.RAILWAY_ENVIRONMENT_ID && origin === localOrigin))) {
     throw new ApiError(403, "Cross-origin request denied");
   }
 }

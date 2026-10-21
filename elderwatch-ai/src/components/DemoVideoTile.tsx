@@ -223,7 +223,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
       {/* Footer */}
       <div className="px-3 py-2 bg-sensara-forest-900/95 flex items-center justify-between gap-2">
         <p className="text-[10px] text-sensara-forest-300 truncate flex-1 min-w-0">
-          {currentStatus.severity !== "stable" ? currentStatus.reason : "Monitoring…"}
+          {currentStatus.severity !== "stable" ? currentStatus.reason : (isPaused ? "Monitoring paused" : "Monitoring…")}
         </p>
         <div className="flex items-center gap-1.5 shrink-0">
           {saveMsg && (

@@ -5,6 +5,8 @@ import { defaultSettings } from "../src/lib/platform/settings";
 import { MOCK_RESIDENTS } from "../src/lib/mockData";
 async function main() {
   await migrateSchema();
+  const migratedDb = await getDb();
+  await migratedDb.collection("safety_events").updateMany({ status: { $exists: false } }, [{ $set: { status: { $cond: [{ $eq: ["$acknowledged", true] }, "acknowledged", "open"] }, version: 0 } }]);
   if (process.argv.includes("--demo")) {
     await seedResidents();
     const db = await getDb();

@@ -153,7 +153,7 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
       <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
         {deduplicated.length === 0 && (
           <p className="text-sensara-warm-500 text-sm text-center py-6">
-            No events yet — monitoring active
+            No saved events yet
           </p>
         )}
 
@@ -219,7 +219,7 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
                   )}
 
                   <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-sensara-warm-600">
-                    <span>Confidence: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}%</b></span>
+                    <span>Heuristic score: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}/100</b></span>
                     <span>Posture: <b className="text-sensara-forest-900">{Math.round(event.signals?.postureAngle ?? 0)}°</b></span>
                     <span>Still: <b className="text-sensara-forest-900">{Math.round(event.signals?.secondsStill ?? 0)}s</b></span>
                   </div>

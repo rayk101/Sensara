@@ -7,6 +7,7 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
   const [patients, setPatients] = useState<Array<{ patientId: string; name: string; room: string; priority: string; observed: string; health: string }>>([]);
   const [events, setEvents] = useState<SafetyEvent[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState("Audio alerts off");
@@ -19,7 +20,7 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
     try {
       const [er, nr, pr] = await Promise.all([fetch("/api/events?limit=100"), fetch("/api/notifications"), fetch("/api/observations")]);
       if (!er.ok || !nr.ok || !pr.ok) throw new Error("Incident history is unavailable. Monitoring results may not be saved.");
-      const [e, n, p] = await Promise.all([er.json(), nr.json(), pr.json()]); setPatients(p.patients); setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError("");
+      const [e, n, p] = await Promise.all([er.json(), nr.json(), pr.json()]); setPatients(p.patients); setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError(""); setLoaded(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Connection unavailable"); }
   }, [onEvents]);
   useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 3000); return () => clearInterval(timer); }, [refresh]);
@@ -74,7 +75,7 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
   }, [audioEnabled, eventKey, retry]);
   const action = async (id: string, path: string, body: object = {}) => { const r = await fetch(`/api/events/${id}/${path}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (!r.ok) throw new Error((await r.json()).error ?? "Action failed"); await refresh(); };
   return <section className="my-4 rounded-xl border border-sensara-border bg-white p-4">
-    <div className="flex flex-wrap items-center gap-3"><h2 className="font-semibold">Saved incidents</h2><span className={urgent.length ? "font-bold text-red-700" : "text-sm"}>{urgent.length ? `${urgent.length} unresolved urgent incident(s)` : "No unresolved urgent incidents"}</span>
+    <div className="flex flex-wrap items-center gap-3"><h2 className="font-semibold">Saved incidents</h2><span className={urgent.length ? "font-bold text-red-700" : "text-sm"}>{!loaded ? "Loading saved incident status…" : error ? "Saved incident status unavailable" : urgent.length ? `${urgent.length} unresolved urgent incident(s)` : "No unresolved urgent incidents"}</span>
       <button className="rounded border px-3 py-1 text-xs" onClick={() => { audioRef.current ??= new Audio(); setAudioEnabled(v => !v); }}>{audioEnabled ? "Disable audio alerts" : "Enable Audio Alerts"}</button>
       <button className="rounded border px-3 py-1 text-xs" onClick={() => { if (manualPlayRef.current) { manualPlayRef.current(); return; } seen.current.clear(); setAudioEnabled(true); setRetry(v => v + 1); }}>{voiceStatus.startsWith("Audio blocked") ? "Play blocked alert" : "Retry voice"}</button><span role="status" className={voiceStatus.startsWith("Audio blocked") ? "font-bold text-red-700" : "text-xs"}>{voiceStatus}</span>
     </div>

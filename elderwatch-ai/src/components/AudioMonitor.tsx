@@ -380,7 +380,7 @@ export default function AudioMonitor({
               {lastClassification.severity}
             </span>
             <span className="text-[10px] opacity-70">
-              {Math.round(lastClassification.confidence * 100)}% conf.
+              {Math.round(lastClassification.confidence * 100)}/100 heuristic
             </span>
           </div>
           <p className="opacity-90">{lastClassification.reason}</p>
