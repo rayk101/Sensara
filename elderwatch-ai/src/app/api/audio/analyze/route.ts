@@ -1,5 +1,6 @@
+import { getSession } from "@/lib/platform/sessions";
 import { getResidentById } from "@/lib/db/residents";
-import { withAuth } from "@/lib/platform/auth";
+import { withAuth, ApiError } from "@/lib/platform/auth";
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
@@ -56,7 +57,11 @@ async function POSTHandler(req: Request) {
       if (!(audioFile instanceof File) || audioFile.size > 10 * 1024 * 1024 || !/^(audio|video)\//.test(audioFile.type)) return NextResponse.json({ error: "Invalid audio file (maximum 10 MB)" }, { status: 400 });
       sessionId = form.get("sessionId") as string | null;
       requestId = form.get("idempotencyKey") as string | null;
-      if (!await getResidentById(residentId)) return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+      const patient = await getResidentById(residentId);
+      if (!patient || patient.active === false) throw new ApiError(404, "Patient not found");
+      if (patient.monitoringConfig?.audioEnabled !== true) throw new ApiError(409, "Audio monitoring is disabled in this patient's record");
+      const monitoring = sessionId ? await getSession(sessionId) : null;
+      if (!monitoring || monitoring.residentId !== residentId || monitoring.status !== "active") throw new ApiError(409, "An active patient monitoring session is required");
       const buffer = Buffer.from(await audioFile.arrayBuffer());
       const result = await transcribeAudioWithElevenLabs(buffer, audioFile.type || "audio/webm");
       transcript = result.transcript;
@@ -126,6 +131,7 @@ async function POSTHandler(req: Request) {
       isSimulation,
     });
   } catch (err) {
+    if (err instanceof ApiError) throw err;
     console.error("POST /api/audio/analyze error:", err);
     return NextResponse.json({ error: "Audio analysis failed" }, { status: 500 });
   }

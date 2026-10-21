@@ -1,4 +1,6 @@
-import { withAuth } from "@/lib/platform/auth";
+import { withAuth, ApiError } from "@/lib/platform/auth";
+import { getResidentById } from "@/lib/db/residents";
+import { getSettings } from "@/lib/platform/settings";
 import { NextResponse } from "next/server";
 import type { ResidentProfile, SafetyClassification } from "@/lib/types";
 import { RECOMMENDED_ACTIONS } from "@/lib/classifySafety";
@@ -191,7 +193,8 @@ Caregiver question: ${question}`;
 async function POSTHandler(req: Request) {
   try {
     const body: AssistantRequest = await req.json();
-    const { question, resident, classification } = body;
+    const { question, classification } = body;
+    const resident = body.resident?.id ? await getResidentById(body.resident.id) : null;
 
     if (typeof question !== "string" || !question.trim() || !classification || typeof classification.eventType !== "string" || !resident) {
       return NextResponse.json({ error: "Missing question or classification" }, { status: 400 });
@@ -200,12 +203,12 @@ async function POSTHandler(req: Request) {
     let guidance: string;
     let generatedBy = "mock";
 
-    if (process.env.ANTHROPIC_API_KEY) {
+    if (process.env.ANTHROPIC_API_KEY && (await getSettings()).dataMode === "demo") {
       try {
         guidance = await callClaudeAPI(question, resident, classification);
         generatedBy = "claude";
-      } catch (apiErr) {
-        console.warn("Claude API call failed, using mock:", apiErr);
+      } catch {
+        console.warn("Claude API unavailable; returning local guidance.");
         guidance = getMockGuidance(classification.eventType, question);
       }
     } else {
@@ -219,7 +222,8 @@ async function POSTHandler(req: Request) {
       generatedBy,
     });
   } catch (err) {
-    console.error("POST /api/assistant error:", err);
+    if (err instanceof ApiError) throw err;
+    console.error("Care assistant unavailable");
     return NextResponse.json({ error: "Assistant unavailable" }, { status: 500 });
   }
 }

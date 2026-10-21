@@ -11,6 +11,7 @@ import { sendPhotonMessage } from "../photon";
 export interface NotificationRecord {
   id: string; eventId: string; residentId: string; staffId: string; channel: Caregiver["channel"];
   provider: string; status: "queued" | "submitted" | "accepted" | "delivered" | "failed" | "unknown" | "cancelled";
+  attemptId?: string; attemptCount?: number; attempts?: Array<{ attemptId: string; status: string; at: string }>;
   providerMessageId: string | null; retryCount: number; createdAt: string; lastAttemptAt: string | null;
   nextAttemptAt: string; leaseUntil?: string | null; leaseOwner?: string; error: string | null;
 }
@@ -60,7 +61,7 @@ export async function deliverNotification(record: NotificationRecord): Promise<s
   const event = await getSafetyEvent(record.eventId);
   const patient = await getResidentById(record.residentId);
   const settings = await getSettings();
-  if (!recipient || !event || !patient || patient.active === false || event.acknowledged || event.status === "resolved" || !settings.notificationsEnabled) throw new ApiError(409, "Notification no longer authorized");
+  if (!recipient || !event || !patient || patient.active === false || event.acknowledged || ["resolved", "dismissed"].includes(event.status ?? "") || !settings.notificationsEnabled) throw new ApiError(409, "Notification no longer authorized");
   const body = notificationText(event, settings.dataMode === "demo");
   if (recipient.channel === "imessage") return await sendPhotonMessage(body, recipient.destination);
   if (recipient.channel === "sms") {
@@ -84,9 +85,9 @@ export async function processNotifications(send = deliverNotification) {
   let record: NotificationRecord | null = null;
   if (!isMongoEnabled()) {
     record = [...memory("notifications").values()].find(n => n.status === "queued" && n.nextAttemptAt <= now) as NotificationRecord ?? null;
-    if (record) Object.assign(record, { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner, retryCount: record.retryCount + 1 });
+    if (record) Object.assign(record, { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner, attemptId: leaseOwner, attemptCount: (record.attemptCount ?? 0) + 1, retryCount: record.retryCount + 1 });
   } else record = await (await getDb()).collection<NotificationRecord>("notifications").findOneAndUpdate(
-    { status: "queued", nextAttemptAt: { $lte: now } }, { $set: { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner }, $inc: { retryCount: 1 } }, { returnDocument: "after", sort: { createdAt: 1 } });
+    { status: "queued", nextAttemptAt: { $lte: now } }, { $set: { status: "submitted", lastAttemptAt: now, leaseUntil: lease, leaseOwner, attemptId: leaseOwner }, $inc: { retryCount: 1, attemptCount: 1 } }, { returnDocument: "after", sort: { createdAt: 1 } });
   if (!record) return;
   let update: Partial<NotificationRecord>;
   try { update = { status: "accepted", providerMessageId: await send(record), error: null, leaseUntil: null }; }
@@ -95,6 +96,7 @@ export async function processNotifications(send = deliverNotification) {
     update = { status: error instanceof ApiError && error.status === 409 ? "cancelled" : failure.uncertain ? "unknown" : failure.retry && record.retryCount < 4 ? "queued" : "failed",
       nextAttemptAt: new Date(Date.now() + retryDelay(record.retryCount) + Math.floor(Math.random() * 1000)).toISOString(), error: failure.message, leaseUntil: null };
   }
-  if (!isMongoEnabled()) Object.assign(record, update);
-  else await (await getDb()).collection("notifications").updateOne({ id: record.id, status: "submitted", leaseOwner }, { $set: update });
+  const attempt = { attemptId: leaseOwner, status: update.status!, at: new Date().toISOString() };
+  if (!isMongoEnabled()) { Object.assign(record, update); (record.attempts ??= []).push(attempt); }
+  else await (await getDb()).collection<NotificationRecord>("notifications").updateOne({ id: record.id, status: "submitted", leaseOwner }, { $set: update, $push: { attempts: attempt } });
 }

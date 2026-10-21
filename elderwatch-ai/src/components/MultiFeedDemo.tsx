@@ -5,7 +5,7 @@ import DemoVideoTile, { type DemoFeedConfig, type DemoFeedStatus } from "./DemoV
 import FacilityAlertPanel, { type FeedAlert } from "./FacilityAlertPanel";
 
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
-import type { ResidentProfile } from "@/lib/types";
+import type { ResidentProfile, SafetyEvent } from "@/lib/types";
 interface FeedState extends DemoFeedStatus {
   alertSince: number;
 }
@@ -18,7 +18,7 @@ const defaultFeedState: FeedState = {
   alertSince: 0,
 };
 
-export default function MultiFeedDemo({ isPaused = false, residents }: { isPaused?: boolean; residents: ResidentProfile[] }) {
+export default function MultiFeedDemo({ isPaused = false, residents, events }: { isPaused?: boolean; residents: ResidentProfile[]; events: SafetyEvent[] }) {
   const DEMO_FEEDS: DemoFeedConfig[] = DEMO_SCENARIOS.flatMap(scenario => {
     const patient = residents.find(r => r.id === scenario.residentId && r.active !== false);
     return patient ? [{ ...scenario, resident: patient.name, room: patient.room }] : [];
@@ -93,6 +93,7 @@ export default function MultiFeedDemo({ isPaused = false, residents }: { isPause
             <DemoVideoTile
               key={feed.id}
               config={feed}
+              activeUrgent={events.some(e => e.residentId === feed.residentId && e.severity === "urgent" && !["resolved", "dismissed"].includes(e.status ?? ""))}
               isPaused={isPaused}
               onStatusChange={handleStatusChange}
             />
@@ -102,6 +103,12 @@ export default function MultiFeedDemo({ isPaused = false, residents }: { isPause
         {/* Facility alert panel */}
         <FacilityAlertPanel
           alerts={alerts}
+          onMarkCare={async feedId => {
+            const feed = DEMO_FEEDS.find(f => f.id === feedId);
+            const active = events.filter(e => e.residentId === feed?.residentId && !["resolved", "dismissed"].includes(e.status ?? ""));
+            if (!active.length) throw new Error("No saved incident yet");
+            await Promise.all(active.map(async e => { const r = await fetch(`/api/events/${e._id}/acknowledge`, { method: "PATCH" }); if (!r.ok) throw new Error("Acknowledgment failed"); }));
+          }}
           onSaveToHistory={saveEvent}
           onSaveAll={handleSaveAll}
         />

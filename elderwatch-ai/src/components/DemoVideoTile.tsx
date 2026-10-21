@@ -25,6 +25,7 @@ export interface DemoFeedStatus {
 
 interface DemoVideoTileProps {
   config: DemoFeedConfig;
+  activeUrgent?: boolean;
   isPaused?: boolean;
   onStatusChange?: (feedId: string, status: DemoFeedStatus) => void;
 }
@@ -55,11 +56,10 @@ const SEVERITY_HEADER_BG: Record<string, string> = {
   urgent: "bg-red-900/90",
 };
 
-export default function DemoVideoTile({ config, onStatusChange, isPaused = false }: DemoVideoTileProps) {
+export default function DemoVideoTile({ config, onStatusChange, isPaused = false, activeUrgent = false }: DemoVideoTileProps) {
   const { sessionId, sessionError } = useMonitoringSession(config.residentId, !isPaused, "multi_feed_demo", config.id);
   const [capturedStream, setCapturedStream] = useState<MediaStream | null>(null);
   const [savedEvent, setSavedEvent] = useState<SafetyEvent | null>(null);
-  const handled = useRef(new Set<string>());
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentStatus, setCurrentStatus] = useState<DemoFeedStatus>({
     severity: "stable",
@@ -129,25 +129,34 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
     finally { setIsSaving(false); }
   }, [config.id, config.residentId, currentStatus, sessionId]);
   useEffect(() => {
-    if (isPaused || !sessionId || currentStatus.severity === "stable") return;
-    const key = `${sessionId}:${currentStatus.eventType}:${currentStatus.severity}`;
-    if (handled.current.has(key)) return;
-    handled.current.add(key); void handleSaveDemoEvent();
-  }, [isPaused, sessionId, currentStatus.severity, currentStatus.eventType, handleSaveDemoEvent]);
+    if (isPaused || !sessionId || videoError) return;
+    let stopped = false;
+    const observe = async () => {
+      try {
+        const response = await fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ residentId: config.residentId, source: "multi_feed_demo", sessionId, scenarioId: config.id, videoTime: videoRef.current?.currentTime ?? 0, sourceEventId: crypto.randomUUID(), detectedAt: new Date().toISOString() }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Observation could not be saved");
+        if (!stopped && body.event) setSavedEvent(body.event);
+      } catch (error) { if (!stopped) setSaveMsg(error instanceof Error ? error.message : "Persistence unavailable"); }
+    };
+    void observe(); const timer = setInterval(() => { void observe(); }, 3000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [isPaused, sessionId, config.id, config.residentId, videoError]);
 
+  const priority = activeUrgent ? "urgent" : currentStatus.severity;
   const urgentColor = "#ef4444";
   const watchColor = "#eab308";
   const assistColor = "#f97316";
   const activeColor = currentStatus.severity === "urgent" ? urgentColor : currentStatus.severity === "assist" ? assistColor : watchColor;
 
   return (
-    <div className={`rounded-xl overflow-hidden border-2 transition-all duration-500 ${SEVERITY_BORDER[currentStatus.severity]}`}>
+    <div className={`rounded-xl overflow-hidden border-2 transition-all duration-500 ${SEVERITY_BORDER[priority]}`}>
       {(sessionError || recording.statusMessage) && <p role="status" className="bg-amber-50 px-3 py-2 text-xs">{sessionError || recording.statusMessage}</p>}
       {/* Tile header */}
-      <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${SEVERITY_HEADER_BG[currentStatus.severity]}`}>
+      <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${SEVERITY_HEADER_BG[priority]}`}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <SafetyBadge severity={currentStatus.severity} size="sm" pulse={currentStatus.severity !== "stable"} />
+            {(isPaused || videoError || !sessionId) && !activeUrgent ? <span className="text-xs text-white">UNKNOWN · Monitoring unavailable</span> : <SafetyBadge severity={priority} size="sm" pulse={priority !== "stable"} />}
             <span className="text-white text-xs font-semibold">{config.room}</span>
             <span className="text-[9px] text-gray-400 bg-gray-700/60 border border-gray-600/40 rounded px-1.5 py-0.5 shrink-0">
               SIMULATED FEED
@@ -160,7 +169,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
             <p className="text-[10px] font-semibold" style={{ color: activeColor }}>
               {EVENT_LABELS[currentStatus.eventType] ?? currentStatus.eventType}
             </p>
-            <p className="text-[9px] text-gray-500">{Math.round(currentStatus.confidence * 100)}% conf.</p>
+            <p className="text-[9px] text-gray-500">{Math.round(currentStatus.confidence * 100)}/100 heuristic</p>
           </div>
         )}
       </div>

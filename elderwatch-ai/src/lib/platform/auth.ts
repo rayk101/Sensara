@@ -71,6 +71,7 @@ export function withAuth<A extends unknown[]>(handler: (...args: A) => Promise<R
       const req = args[0] as Request;
       checkOrigin(req);
       const actor = requestActor(req);
+      if (process.env.NODE_ENV === "production" && !process.env.MONGODB_URI) throw new ApiError(503, "Persistent database is not configured");
       if (actor.role === "viewer" && !["GET", "HEAD"].includes(req.method)) throw new ApiError(403, "Read-only account");
       return await asActor(actor, async () => {
         const id = new URL(req.url).searchParams.get("residentId");

@@ -1,3 +1,5 @@
+import { verifyUploadedMedia } from "./media";
+import { getResidentById } from "../db/residents";
 import { randomUUID } from "node:crypto";
 import { getSafetyEvent, linkVideoClipToEvent } from "../db/events";
 import { createVideoClip, getVideoClipById } from "../db/videoClips";
@@ -21,7 +23,7 @@ export async function prepareUpload(input: Record<string, unknown>) {
   const event = await getSafetyEvent(eventId);
   if (!event || event.residentId !== input.residentId || event.severity !== "urgent") throw new ApiError(404, "Matching urgent incident not found");
   const settings = await getSettings();
-  if (!settings.recordingEnabled) throw new ApiError(409, "Recording is disabled");
+  if (!settings.recordingEnabled || (await getResidentById(event.residentId))?.monitoringConfig?.recordingEnabled === false) throw new ApiError(409, "Recording is disabled");
   if (event.hasVideoClip) throw new ApiError(409, "Incident already has a clip");
   const id = randomUUID();
   const intent: UploadIntent = { id, eventId, residentId: event.residentId, ...file,
@@ -41,7 +43,7 @@ export async function prepareUpload(input: Record<string, unknown>) {
     uploadUrl: await createPresignedUploadUrl({ key: saved.s3Key, contentType: saved.contentType, fileSize: saved.fileSize }),
     headers: { "Content-Type": saved.contentType, "If-None-Match": "*" } };
 }
-export async function completeUpload(input: Record<string, unknown>, inspect = inspectUploadedObject) {
+export async function completeUpload(input: Record<string, unknown>, inspect = inspectUploadedObject, verify = verifyUploadedMedia) {
   const id = identifier(input.uploadId, "upload");
   const intent = await readRecord<UploadIntent>("upload_intents", id);
   if (!intent) throw new ApiError(404, "Upload not found");
@@ -58,15 +60,18 @@ export async function completeUpload(input: Record<string, unknown>, inspect = i
   const bytes = object.bytes;
   const validContainer = intent.contentType.startsWith("video/webm") ? bytes?.[0] === 0x1a && bytes?.[1] === 0x45 && bytes?.[2] === 0xdf && bytes?.[3] === 0xa3 : bytes && Buffer.from(bytes.slice(4, 8)).toString() === "ftyp";
   if (object.size !== intent.fileSize || object.type !== intent.contentType || !validContainer) throw new ApiError(400, "Uploaded object does not match the approved video");
+  const mediaDuration = await verify(intent.s3Key);
   const settings = await getSettings();
   const clip = await createVideoClip({ eventId: intent.eventId, residentId: event.residentId, residentName: event.residentName, room: event.room,
     severity: event.severity, eventType: event.eventType, s3Key: intent.s3Key, bucket: intent.bucket, contentType: intent.contentType,
     fileSize: intent.fileSize, uploadStatus: "uploaded", uploadedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + settings.retentionDays * 86400_000).toISOString(),
-    footageType: "post-event", durationSeconds: duration, clipStartTime: start, clipEndTime: end,
+    footageType: "post-event", durationSeconds: mediaDuration, clipStartTime: start, clipEndTime: end,
     hasVideoTrack: true, hasAudioTrack: input.hasAudioTrack === true, createdAt: new Date().toISOString() });
-  const updated = await linkVideoClipToEvent(intent.eventId, clip._id!, { s3Key: clip.s3Key, bucket: clip.bucket, contentType: clip.contentType, durationSeconds: duration, clipStartTime: start, clipEndTime: end });
+  const updated = await linkVideoClipToEvent(intent.eventId, clip._id!, { s3Key: clip.s3Key, bucket: clip.bucket, contentType: clip.contentType, durationSeconds: mediaDuration, clipStartTime: start, clipEndTime: end });
   const update = { status: "uploaded", clipId: clip._id };
   if (!isMongoEnabled()) Object.assign(intent, update);
   else await (await getDb()).collection("upload_intents").updateOne({ id }, { $set: update });
+  if (isMongoEnabled()) await (await getDb()).collection("safety_events").updateOne({ idempotencyKey: event.idempotencyKey }, { $set: { "workflow.video": { status: "available", updatedAt: new Date().toISOString() } } });
+  else if (updated?.workflow) updated.workflow.video = { status: "available", updatedAt: new Date().toISOString() };
   return { ...clip, event: updated };
 }

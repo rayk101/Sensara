@@ -8,6 +8,7 @@ import { DEFAULT_SAFE_ZONE, clampSafeZone, DETECTION_THRESHOLDS } from "@/lib/po
 import { usePoseDetection } from "@/hooks/usePoseDetection";
 import { useResidentMonitor } from "@/hooks/useResidentMonitor";
 import { useMonitoringSession } from "@/hooks/useMonitoringSession";
+import Administration from "@/components/Administration";
 import IncidentCenter from "@/components/IncidentCenter";
 import SignIn from "@/components/SignIn";
 import { useVideoRecorder } from "@/hooks/useVideoRecorder";
@@ -61,6 +62,7 @@ export default function Dashboard() {
   const [isPaused, setIsPaused] = useState(true);
   const [monitoringConsent, setMonitoringConsent] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
+  const [persistedEvents, setPersistedEvents] = useState<SafetyEvent[]>([]);
   const [patientError, setPatientError] = useState("");
   const [cameraId, setCameraId] = useState("");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -98,9 +100,15 @@ export default function Dashboard() {
 
   // Classify each frame directly so pose and monitoring state render together.
   const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(
-    monitoringRequested,
+    monitoringRequested && !!sessionId,
     processFrame, cameraId, selectedResident?.id
   );
+
+  useEffect(() => {
+    if (sessionId && ["no-webcam", "error"].includes(poseStatus)) {
+      void fetch(`/api/monitoring-sessions/${sessionId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "interrupted" }) });
+    }
+  }, [sessionId, poseStatus]);
 
   useEffect(() => {
     if (mainTab === "live-camera") void refreshHistory();
@@ -292,7 +300,8 @@ export default function Dashboard() {
         <label className="mb-3 block text-sm"><input type="checkbox" checked={monitoringConsent} onChange={e => { setMonitoringConsent(e.target.checked); if (!e.target.checked) setIsPaused(true); }} /> I authorize {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "these four fictional demo scenarios"}, 15-second incident recordings, and configured alerts.</label>
         {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError}</p>}
         {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => { setIsPaused(true); setCameraId(e.target.value); }}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
-        <IncidentCenter />
+        <IncidentCenter onEvents={setPersistedEvents} />
+        <Administration residents={residents} onSaved={() => window.location.reload()} />
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
           <span>Photon iMessage: {photonConfigured ? "Configured · check delivery outcomes below" : "Not configured"}</span>
           {photonConfigured && (
@@ -311,7 +320,7 @@ export default function Dashboard() {
 
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>
-          <MultiFeedDemo residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
+          <MultiFeedDemo events={persistedEvents} residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
         </div>
 
         {/* ── TAB 2: Live Camera Demo ─────────────────────────────────────── */}

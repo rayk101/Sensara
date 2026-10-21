@@ -63,11 +63,13 @@ export async function transitionIncident(id: string, status: "acknowledged" | "r
   const event = await getSafetyEvent(id);
   if (!event) return null;
   if (status !== "acknowledged" && (!reason?.trim() || reason.length > 2000)) throw new ApiError(400, "A resolution or dismissal reason is required");
-  if (event.status === status || (status === "acknowledged" && event.acknowledged)) return event;
+  if (event.status === status) return event;
+  if (["resolved", "dismissed"].includes(event.status ?? "")) throw new ApiError(409, "Closed incidents cannot change response status");
+  if (status === "acknowledged" && event.acknowledged) return event;
   if (["resolved", "dismissed"].includes(event.status ?? "") || (status === "resolved" && !event.acknowledged)) throw new ApiError(409, "Acknowledge the incident before resolving it; resolved incidents cannot reopen");
   const now = new Date().toISOString();
   const update = status === "acknowledged" ? { status, acknowledged: true, acknowledgedAt: now, acknowledgedBy: by } : { status, resolvedAt: now };
-  const entry = { status, at: now, by, ...(reason ? { reason: reason.trim() } : {}) };
+  const entry = { status, at: now, by, actorId: currentActor().id, ...(reason ? { reason: reason.trim() } : {}) };
   if (!isMongoEnabled()) { Object.assign(event, update); event.version = (event.version ?? 0) + 1; if (status !== "acknowledged") delete event.activeEpisodeKey; (event.stateHistory ??= []).push(entry); return event; }
   const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id, status: event.status ?? { $exists: false }, version: event.version ?? { $exists: false } };
   const result = await (await getDb()).collection<SafetyEvent>(COLLECTION).findOneAndUpdate(filter as object, { $set: update, $inc: { version: 1 }, ...(status !== "acknowledged" ? { $unset: { activeEpisodeKey: "" } } : {}), $push: { stateHistory: entry } }, { returnDocument: "after" });

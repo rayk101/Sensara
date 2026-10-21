@@ -1,3 +1,9 @@
+import { createHash, randomUUID } from "node:crypto";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getS3Client, getS3Bucket, isS3Configured } from "../s3";
+import { ObjectId } from "mongodb";
+import { identifier } from "./validation";
+import { getDb, isMongoEnabled } from "../mongodb";
 import { getSafetyEvent } from "../db/events";
 import { ApiError, currentActor } from "./auth";
 import { getSettings } from "./settings";
@@ -22,35 +28,81 @@ export async function generateSpeech(text: string): Promise<Uint8Array> {
   }
   throw new ApiError(429, "ElevenLabs voice rate limit");
 }
-const cache = new Map<string, { expires: number; audio: Promise<Uint8Array> }>();
-export async function incidentSpeech(id: string) {
-  const event = await getSafetyEvent(id);
-  if (!event || event.severity !== "urgent" || event.acknowledged || event.status === "resolved") throw new ApiError(404, "Active urgent incident not found");
+interface VoiceAsset { id: string; s3Key: string; contentType: string; expiresAt: string; privacy?: string }
+const cache = new Map<string, Promise<Uint8Array>>();
+async function speechAsset(event: SafetyEvent) {
   const settings = await getSettings();
-  if (!settings.voiceEnabled) throw new ApiError(409, "Voice alerts disabled");
-  const recordId = `voice:${id}:${currentActor().id}`;
+  const id = String(event._id);
+  const asset = await readRecord<VoiceAsset>("voice_assets", id);
+  if (asset && Date.parse(asset.expiresAt) <= Date.now()) throw new ApiError(410, "Voice asset retention expired");
+  if (asset && asset.privacy === settings.dataMode && isS3Configured()) {
+    const object = await getS3Client().send(new GetObjectCommand({ Bucket: getS3Bucket(), Key: asset.s3Key }));
+    return (await object.Body!.transformToByteArray());
+  }
+  const cacheKey = `${id}:${settings.dataMode}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey)!;
+  const work = (async () => {
+    const audio = await generateSpeech(voiceText(event, settings.dataMode === "demo"));
+    if (isS3Configured()) {
+      try {
+      const hash = createHash("sha256").update(`${process.env.ELEVENLABS_VOICE_ID}:${process.env.ELEVENLABS_MODEL_ID}:${settings.dataMode}`).digest("hex").slice(0, 16);
+      const s3Key = `critical-events/voice/${id}/${hash}.mp3`;
+      await getS3Client().send(new PutObjectCommand({ Bucket: getS3Bucket(), Key: s3Key, Body: audio, ContentType: "audio/mpeg" }));
+      await writeRecord("voice_assets", { id, s3Key, privacy: settings.dataMode, contentType: "audio/mpeg", expiresAt: new Date(Date.now() + settings.retentionDays * 86400_000).toISOString() });
+      } catch { console.warn("Voice generated; durable audio storage unavailable"); }
+    }
+    return audio;
+  })();
+  if (cache.size >= 20) cache.delete(cache.keys().next().value!);
+  cache.set(cacheKey, work);
+  try { return await work; } catch (e) { cache.delete(cacheKey); throw e; }
+}
+export async function processVoiceWork(targetId?: string) {
+  if (!isMongoEnabled()) return; // local tests invoke the same generator with mocked transports
+  const db = await getDb(), owner = randomUUID(), now = new Date().toISOString();
+  await db.collection("safety_events").updateMany({ "workflow.voice.status": "generating", "workflow.voice.leaseUntil": { $lt: now } }, { $set: { "workflow.voice.status": "queued" } });
+  const event = await db.collection("safety_events").findOneAndUpdate({ ...(targetId ? { _id: new ObjectId(targetId) } : {}), "workflow.voice.status": "queued", $or: [{ "workflow.voice.nextAttemptAt": { $exists: false } }, { "workflow.voice.nextAttemptAt": { $lte: now } }], status: { $nin: ["resolved", "dismissed"] }, acknowledged: false }, { $set: { "workflow.voice.status": "generating", "workflow.voice.leaseOwner": owner, "workflow.voice.leaseUntil": new Date(Date.now() + 60_000).toISOString(), "workflow.voice.lastAttemptAt": now }, $inc: { "workflow.voice.attemptCount": 1 } }, { returnDocument: "after" });
+  if (!event) return;
+  let state;
+  try { await speechAsset(event as unknown as SafetyEvent); state = { status: (await readRecord("voice_assets", event._id.toString())) ? "ready" : "ready_volatile", updatedAt: new Date().toISOString() }; }
+  catch (e) {
+    const retryable = !(e instanceof ApiError) || e.status === 429;
+    const attempts = event.workflow?.voice?.attemptCount ?? 1;
+    state = { status: retryable && attempts < 4 ? "queued" : "failed", nextAttemptAt: new Date(Date.now() + Math.min(300000, 5000 * 2 ** attempts) + Math.random() * 1000).toISOString(), updatedAt: new Date().toISOString(), error: e instanceof ApiError ? e.message : "Speech generation or storage failed" };
+  }
+  state = { ...state, attemptCount: event.workflow?.voice?.attemptCount ?? 1, lastAttemptAt: now, attemptId: owner };
+  await db.collection("safety_events").updateOne({ _id: event._id, "workflow.voice.leaseOwner": owner }, { $set: { "workflow.voice": state } });
+}
+export async function incidentSpeech(id: string, deviceId = "default") {
+  const event = await getSafetyEvent(id);
+  if (!event || event.severity !== "urgent" || event.acknowledged || ["resolved", "dismissed"].includes(event.status ?? "")) throw new ApiError(404, "Active urgent incident not found");
+  if (!(await getSettings()).voiceEnabled) throw new ApiError(409, "Voice alerts disabled");
+  const recordId = `voice:${id}:${currentActor().id}:${identifier(deviceId, "playback device")}`;
   const existing = await readRecord("notifications", recordId);
-  const record = { id: recordId, eventId: id, residentId: event.residentId, staffId: currentActor().id, channel: "voice", provider: "elevenlabs", status: "generating", createdAt: existing?.createdAt ?? new Date().toISOString(), lastAttemptAt: new Date().toISOString(), retryCount: (existing?.retryCount ?? 0) + 1, error: null };
-  for (const [key, value] of cache) if (value.expires < Date.now()) cache.delete(key);
-  const key = `${id}:${process.env.ELEVENLABS_VOICE_ID}:${settings.dataMode}`;
-  let value = cache.get(key);
-  if (!value) { if (cache.size >= 20) cache.delete(cache.keys().next().value!); value = { expires: Date.now() + 300_000, audio: generateSpeech(voiceText(event, settings.dataMode === "demo")) }; cache.set(key, value); }
+  const record = { id: recordId, deviceId, generationStatus: "generating", eventId: id, residentId: event.residentId, staffId: currentActor().id, channel: "voice", provider: "elevenlabs", status: "generating", createdAt: existing?.createdAt ?? new Date().toISOString(), lastAttemptAt: new Date().toISOString(), retryCount: (existing?.retryCount ?? 0) + 1, error: null };
   try {
-    const audio = await value.audio;
-    await writeRecord("notifications", { ...record, status: "generated" });
+    if (isMongoEnabled() && !await readRecord("voice_assets", id)) {
+      await (await getDb()).collection("safety_events").updateOne({ _id: new ObjectId(id), "workflow.voice.status": "failed" }, { $set: { "workflow.voice.status": "queued", "workflow.voice.nextAttemptAt": new Date().toISOString() } });
+      await processVoiceWork(id);
+      const latest = await getSafetyEvent(id);
+      if (["queued", "generating"].includes(latest?.workflow?.voice.status ?? "")) throw new ApiError(425, "Voice generation is pending; retry shortly");
+      if (latest?.workflow?.voice.status === "failed") throw new ApiError(502, latest.workflow.voice.error ?? "Speech generation failed");
+    }
+    const audio = await speechAsset(event);
+    await writeRecord("notifications", { ...record, status: "generated", generationStatus: "ready" });
     return audio;
   } catch (error) {
-    cache.delete(key);
-    await writeRecord("notifications", { ...record, status: "failed", error: "Speech generation failed" });
+    await writeRecord("notifications", { ...record, status: "failed", generationStatus: "failed", error: "Speech generation failed" });
     throw error;
   }
 }
-export async function recordVoicePlayback(id: string, status: string) {
+export async function recordVoicePlayback(id: string, status: string, deviceId = "default") {
   const event = await getSafetyEvent(id);
   if (!event) throw new ApiError(404, "Incident not found");
-  if (!["played", "blocked", "playback_failed"].includes(status)) throw new ApiError(400, "Invalid playback status");
-  const recordId = `voice:${id}:${currentActor().id}`;
+  if (!["playing", "played", "blocked", "interrupted", "playback_failed"].includes(status)) throw new ApiError(400, "Invalid playback status");
+  const recordId = `voice:${id}:${currentActor().id}:${identifier(deviceId, "playback device")}`;
   const record = await readRecord("notifications", recordId);
   if (!record) throw new ApiError(409, "Generate speech before reporting playback");
-  await writeRecord("notifications", { ...record, id: recordId, status, lastAttemptAt: new Date().toISOString() });
+  if (record.status === "played" && status !== "played") return;
+  await writeRecord("notifications", { ...record, id: recordId, playbackStatus: status, status, lastAttemptAt: new Date().toISOString() });
 }

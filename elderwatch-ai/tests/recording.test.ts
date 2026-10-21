@@ -83,7 +83,8 @@ test("disabled clip storage never requests the microphone or starts a recording"
   }
 });
 
-test("an active clip retains its original event when later alerts arrive", async () => {
+test("an active clip retains its original event when later alerts arrive", async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const env = setup(true);
   let renderer: ReactTestRenderer | undefined;
   const original = event();
@@ -97,12 +98,14 @@ test("an active clip retains its original event when later alerts arrive", async
     await act(async () => renderer!.update(createElement(Probe, { current: { ...original, _id: "later-event", residentId: "other-resident", severity: "watch", eventType: "out_of_frame" } })));
     assert.equal(env.recorders[0].state, "recording");
     assert.equal(env.recorders.length, 1);
+    t.mock.timers.tick(15_000);
     await act(async () => env.recorders[0].stop());
     const saved = env.requests.find(request => request.url === "/api/video-clips")?.body;
     assert.equal(saved?.eventId, original._id);
     assert.equal(saved?.residentId, original.residentId);
-    assert.equal(saved?.hasAudioTrack, true);
-    assert.equal(env.ownedMicTrack.readyState, "ended");
+    assert.equal(saved?.hasAudioTrack, false);
+    assert.equal(env.micRequests, 0);
+    assert.equal(env.ownedMicTrack.readyState, "live");
     assert.equal(env.cameraTrack.readyState, "live");
   } finally {
     await act(async () => renderer?.unmount());
@@ -110,7 +113,7 @@ test("an active clip retains its original event when later alerts arrive", async
   }
 });
 
-test("pausing cancels recording, releases its microphone, and does not upload a partial clip", async () => {
+test("pausing cancels recording without taking microphone ownership or uploading partial footage", async () => {
   const env = setup(true);
   let renderer: ReactTestRenderer | undefined;
   const original = event();
@@ -123,7 +126,7 @@ test("pausing cancels recording, releases its microphone, and does not upload a 
     assert.equal(env.recorders[0].state, "recording");
     await act(async () => renderer!.update(createElement(Probe, { paused: true })));
     assert.equal(env.recorders[0].state, "inactive");
-    assert.equal(env.ownedMicTrack.readyState, "ended");
+    assert.equal(env.ownedMicTrack.readyState, "live");
     assert.equal(env.requests.filter(request => request.url === "/api/video-clips").length, 0);
   } finally {
     await act(async () => renderer?.unmount());

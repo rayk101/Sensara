@@ -18,6 +18,7 @@ export async function ensureIndexes(): Promise<void> {
     db.collection("notifications").createIndex({ id: 1 }, { unique: true }),
     db.collection("notifications").createIndex({ status: 1, nextAttemptAt: 1 }),
     db.collection("notifications").createIndex({ eventId: 1, residentId: 1 }),
+    db.collection("voice_assets").createIndex({ id: 1 }, { unique: true }),
     db.collection("staff").createIndex({ id: 1 }, { unique: true }),
     db.collection("application_settings").createIndex({ id: 1 }, { unique: true }),
     db.collection("upload_intents").createIndex({ id: 1 }, { unique: true }),

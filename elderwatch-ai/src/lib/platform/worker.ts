@@ -1,5 +1,6 @@
 import { asActor, systemActor } from "./auth";
 import { processNotifications } from "./notifications";
+import { processVoiceWork } from "./voice";
 import { expireSessions } from "./sessions";
 const state = globalThis as typeof globalThis & { sensaraWorker?: ReturnType<typeof setInterval>; sensaraWorkerBusy?: boolean };
 export function startWorker() {
@@ -8,7 +9,7 @@ export function startWorker() {
     if (state.sensaraWorkerBusy) return;
     state.sensaraWorkerBusy = true;
     void asActor(systemActor, async () => {
-      try { await expireSessions(); await processNotifications(); }
+      try { await Promise.all([expireSessions(), processNotifications(), processVoiceWork()]); }
       catch { console.error("[Sensara worker] Storage or provider processing unavailable; will retry next poll."); }
       finally { state.sensaraWorkerBusy = false; }
     });

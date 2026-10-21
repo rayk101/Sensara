@@ -97,7 +97,7 @@ export interface SafetyEvent {
   };
   initialStatus?: "open";
   resolvedAt?: string | null;
-  stateHistory?: Array<{ status: string; at: string; by: string; reason?: string }>;
+  stateHistory?: Array<{ status: string; at: string; by: string; actorId?: string; reason?: string }>;
   notificationsQueued?: boolean;
   residentId: string;
   residentName: string;

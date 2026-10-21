@@ -63,6 +63,7 @@ export function useResidentMonitor(
 
   // Per-event-type last-persisted timestamps (replaces global EVENT_DEBOUNCE_MS)
   const lastPersistedRef = useRef<Record<string, number>>({});
+  const lastObservation = useRef({ at: 0, severity: "" });
   // Latch: once possible_fall fires, hold it until the person is clearly upright
   const possibleFallLatchedRef = useRef(false);
 
@@ -284,18 +285,18 @@ export function useResidentMonitor(
       };
     }
 
-    // ── Persist meaningful events with per-event-type cooldowns ─────────────
-    if (classification.severity !== "stable") {
-      const cooldown = DETECTION_THRESHOLDS.eventCooldowns[classification.eventType] ?? 30_000;
-      const lastTime = lastPersistedRef.current[classification.eventType] ?? 0;
-      if (now - lastTime > cooldown) {
-        lastPersistedRef.current[classification.eventType] = now;
-        void saveEvent(resident, classification, signals);
-      }
+    if (sessionId && (now - lastObservation.current.at >= 3000 || classification.severity !== lastObservation.current.severity)) {
+      lastObservation.current = { at: now, severity: classification.severity };
+      const patientId = resident.id;
+      void fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "live_camera", sessionId, residentId: patientId, signals, sourceEventId: crypto.randomUUID(), detectedAt: new Date(now).toISOString() }) }).then(async response => {
+        const body = await response.json();
+        if (!response.ok) throw new Error();
+        if (patientId === residentIdRef.current) { if (body.event) upsertEvent(body.event); setPersistenceError(null); }
+      }).catch(() => { if (patientId === residentIdRef.current) setPersistenceError("Observation not saved. Remote notification is unavailable or unconfirmed."); });
     }
 
     setState(prev => ({ ...prev, signals, classification }));
-  }, [resident, safeZone, saveEvent, resetTimers, isPaused, seizureDetectionEnabled]);
+  }, [resident, safeZone, sessionId, upsertEvent, resetTimers, isPaused, seizureDetectionEnabled]);
 
   const refreshHistory = useCallback(async () => {
     if (!resident) return;
@@ -358,7 +359,7 @@ async function persistEvent(
     body: JSON.stringify({
       source: classification.reason.startsWith("[Demo]") ? "manual" : "live_camera",
       detectedAt: new Date().toISOString(),
-      sessionId, idempotencyKey: `${sessionId}:${classification.eventType}:${classification.severity}`,
+      sessionId, idempotencyKey: crypto.randomUUID(),
       residentId: resident.id, residentName: resident.name, room: resident.room,
       ...classification,
       signals,

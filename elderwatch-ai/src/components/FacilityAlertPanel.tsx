@@ -17,7 +17,7 @@ export interface FeedAlert {
 
 interface FacilityAlertPanelProps {
   alerts: FeedAlert[];
-  onMarkCare?: (feedId: string) => void;
+  onMarkCare?: (feedId: string) => Promise<void>;
   onSaveToHistory?: (alert: FeedAlert) => Promise<void>;
   onSaveAll?: () => Promise<void>;
 }
@@ -116,9 +116,9 @@ export default function FacilityAlertPanel({
     }
   };
 
-  const handleMarkCare = (feedId: string) => {
-    setMarkedIds(prev => new Set(prev).add(feedId));
-    onMarkCare?.(feedId);
+  const handleMarkCare = async (feedId: string) => {
+    try { await onMarkCare?.(feedId); setMarkedIds(prev => new Set(prev).add(feedId)); }
+    catch { setSavedAllMsg("Acknowledgment was not saved. Use Saved incidents to retry."); }
   };
 
   const urgentCount = activeAlerts.filter(a => a.severity === "urgent").length;
@@ -135,7 +135,7 @@ export default function FacilityAlertPanel({
           <div className="flex items-center gap-1.5 bg-sensara-warm-100 border border-sensara-divider rounded-full px-2.5 py-1">
             <div className={`w-1.5 h-1.5 rounded-full ${urgentCount > 0 ? "bg-red-500 animate-pulse" : activeAlerts.length > 0 ? "bg-yellow-500 animate-pulse" : "bg-green-500"}`} />
             <span className="text-[10px] text-sensara-forest-700">
-              {activeAlerts.length === 0 ? "All stable" : `${activeAlerts.length} alert${activeAlerts.length !== 1 ? "s" : ""}`}
+              {activeAlerts.length === 0 ? "No current feed alerts" : `${activeAlerts.length} alert${activeAlerts.length !== 1 ? "s" : ""}`}
             </span>
           </div>
           {activeAlerts.length > 0 && (
