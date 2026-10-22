@@ -1,3 +1,19 @@
+Individual demo feed controls — 2026-10-22
+Implemented per-feed Play/Pause, global Start demo / Pause all, running-feed
+count, and filtered current detector alerts for paused feeds. Existing saved
+incidents remain in the right sidebar. Switching modes stops hidden feeds.
+
+Verification: lint, TypeScript and all 47 automated tests passed. An isolated
+production build passed. Chrome with local fictional in-memory data verified
+individual starts, independent pause, Start demo resuming all four, Pause all,
+mode switching without automatic restart, actual video paused/currentTime
+values, and right-hand alerts. Browser console had no errors in that UI test.
+No live provider notifications, uploads or speech generation were tested.
+The isolated Atlas-backed server encountered DNS/connection failures, although
+a separate direct Atlas read succeeded; production-mode runtime persistence
+was not verified in this check. The existing port-3000 server patient API
+remained HTTP 200.
+
 Connectivity recovery — 2026-10-22
 Resolved two observed causes: system DNS returned EBADRESP/ETIMEOUT for the
 Atlas SRV query, and Atlas's network access list lacked the current public IP.
