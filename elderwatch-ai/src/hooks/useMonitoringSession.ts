@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-export function useMonitoringSession(residentId: string | undefined, enabled: boolean, source: "live_camera" | "multi_feed_demo", deviceId: string) {
-  const [session, setSession] = useState<{ id: string; residentId: string } | null>(null);
+export function useMonitoringSession(residentId: string | undefined, enabled: boolean, source: "live_camera" | "multi_feed_demo", deviceId: string, restartKey = 0) {
+  const contextKey = `${source}:${deviceId}:${restartKey}`;
+  const [session, setSession] = useState<{ id: string; residentId: string; contextKey: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setSession(null); setError(null);
@@ -16,7 +17,7 @@ export function useMonitoringSession(residentId: string | undefined, enabled: bo
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? "Monitoring session could not start");
         if (disposed) { stop(); return; }
-        setSession({ id: result.id, residentId });
+        setSession({ id: result.id, residentId, contextKey });
         heartbeat = setInterval(() => {
           void fetch(`/api/monitoring-sessions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "active" }) }).then(async r => {
             const updated = await r.json();
@@ -29,6 +30,6 @@ export function useMonitoringSession(residentId: string | undefined, enabled: bo
     void start();
     window.addEventListener("pagehide", stop);
     return () => { disposed = true; clearInterval(heartbeat); window.removeEventListener("pagehide", stop); stop(); };
-  }, [residentId, enabled, source, deviceId]);
-  return { sessionId: enabled && session && session.residentId === residentId ? session.id : null, sessionError: error };
+  }, [residentId, enabled, source, deviceId, contextKey]);
+  return { sessionId: enabled && session && session.residentId === residentId && session.contextKey === contextKey ? session.id : null, sessionError: error };
 }

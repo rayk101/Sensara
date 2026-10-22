@@ -70,7 +70,7 @@ test("pausing ignores queued camera frames and resuming still handles lost track
     assert.equal(monitor!.signals.visible, true);
     await act(async () => monitor!.processFrame(null));
     assert.equal(monitor!.signals.visible, false);
-    assert.equal(monitor!.classification.eventType, "out_of_frame");
+    assert.match(monitor!.classification.reason, /unavailable/);
   } finally {
     await act(async () => renderer?.unmount());
     globalThis.fetch = originalFetch;

@@ -7,6 +7,7 @@ interface ResidentCardProps {
   resident: ResidentProfile;
   classification: SafetyClassification;
   signals: SafetySignals;
+  monitoringAvailable?: boolean;
   residents: ResidentProfile[];
   onSelectResident: (id: string) => void;
 }
@@ -18,6 +19,7 @@ const FALL_RISK_COLOR = {
 };
 
 const EVENT_LABELS: Record<string, string> = {
+  possible_choking: "Possible Distress / Neck Gesture",
   fall_risk: "Fall Risk",
   possible_fall: "Possible Fall",
   immobility: "Immobility",
@@ -46,14 +48,16 @@ export default function ResidentCard({
   resident,
   classification,
   signals,
+  monitoringAvailable = true,
   residents,
   onSelectResident,
 }: ResidentCardProps) {
+  const available = monitoringAvailable && signals.visible;
   const { severity, eventType, reason, confidence } = classification;
 
   return (
     <div
-      className={`rounded-xl border-2 p-4 transition-all duration-300 ${PULSE_BORDER[severity]} ${BG_TINT[severity]}`}
+      className={`rounded-xl border-2 p-4 transition-all duration-300 ${available ? PULSE_BORDER[severity] : "border-slate-300"} ${available ? BG_TINT[severity] : "bg-slate-50"}`}
     >
       {/* Resident selector */}
       <div className="flex items-center justify-between mb-3">
@@ -68,8 +72,33 @@ export default function ResidentCard({
             </option>
           ))}
         </select>
-        <SafetyBadge severity={severity} size="md" pulse />
+        {available ? <SafetyBadge severity={severity} size="md" pulse /> : <span className="text-sm font-semibold text-slate-600">UNKNOWN</span>}
       </div>
+
+      {/* Current event */}
+      <div>
+        <p className="text-xs text-sensara-warm-600 uppercase tracking-wide mb-1.5">Current camera observation</p>
+        <div className="bg-sensara-warm-100 rounded-lg p-3 space-y-1.5 border border-sensara-divider">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-sensara-forest-900">
+              {available ? EVENT_LABELS[eventType] ?? eventType : "Monitoring / tracking unavailable"}
+            </span>
+            <span className="text-xs text-sensara-warm-600">
+              {confidence > 0 ? `${Math.round(confidence * 100)}/100 heuristic` : "Movement rule · not a diagnosis"}
+            </span>
+          </div>
+          <p className="text-sm text-sensara-forest-800">{reason}</p>
+          {available && <p className="text-xs text-sensara-warm-700">Hanging-arm posture: {signals.bothArmsHanging ? "both arms tracked down" : "both arms not confirmed"} · {(signals.secondsSlumped ?? 0).toFixed(1)}s / &gt;2s</p>}
+
+          {/* Pose signal summary */}
+          {available && <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] font-mono">
+            <SignalPill label="Posture" value={`${Math.round(signals.postureAngle)}°`} warn={signals.postureAngle > 35} danger={signals.postureAngle > 60} />
+            <SignalPill label="Still" value={signals.secondsStill > 0 ? `${Math.round(signals.secondsStill)}s` : "Moving"} warn={signals.secondsStill > 60} danger={signals.secondsStill > 300} />
+            <SignalPill label="Zone" value={signals.insideSafeZone ? "Safe" : "Outside"} danger={!signals.insideSafeZone} />
+          </div>}
+        </div>
+      </div>
+
 
       {/* Profile info */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-3">
@@ -112,29 +141,6 @@ export default function ResidentCard({
       </div>
 
       <hr className="border-sensara-divider mb-3" />
-
-      {/* Current event */}
-      <div>
-        <p className="text-xs text-sensara-warm-600 uppercase tracking-wide mb-1.5">Current Status</p>
-        <div className="bg-sensara-warm-100 rounded-lg p-3 space-y-1.5 border border-sensara-divider">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-sensara-forest-900">
-              {EVENT_LABELS[eventType] ?? eventType}
-            </span>
-            <span className="text-xs text-sensara-warm-600">
-              {Math.round(confidence * 100)}% confidence
-            </span>
-          </div>
-          <p className="text-sm text-sensara-forest-800">{reason}</p>
-
-          {/* Pose signal summary */}
-          <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] font-mono">
-            <SignalPill label="Posture" value={`${Math.round(signals.postureAngle)}°`} warn={signals.postureAngle > 35} danger={signals.postureAngle > 60} />
-            <SignalPill label="Still" value={signals.secondsStill > 0 ? `${Math.round(signals.secondsStill)}s` : "Moving"} warn={signals.secondsStill > 60} danger={signals.secondsStill > 300} />
-            <SignalPill label="Zone" value={signals.insideSafeZone ? "Safe" : "Outside"} danger={!signals.insideSafeZone} />
-          </div>
-        </div>
-      </div>
 
       {/* Mock data disclaimer */}
       <p className="text-[10px] text-sensara-warm-500 mt-3 text-center">

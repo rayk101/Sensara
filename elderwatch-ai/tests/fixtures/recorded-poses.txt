@@ -1,0 +1,20 @@
+Source: the four existing public/demo-videos/*.mp4 files in this repository.
+Captured 2026-10-22 using the actual local browser worker and Google MediaPipe
+Pose Landmarker Full float16 version 1, tasks-vision 0.10.14, CPU delegate.
+VIDEO mode maintains continuous tracks; implausible inverted tracks trigger
+fresh detection, and their observations remain UNKNOWN.
+Each video was decoded at 640x360; frames were sampled at 5 Hz. The same worker
+used by the dashboard processed sequential frames; values rounded to five
+coordinate decimals/four visibility decimals. 75 samples per video.
+These are measured model outputs, not manually assigned labels or invented
+skeletons. The JSON is used to reproduce classifier behavior without network,
+GPU or camera dependencies. Python dependency download failed; extraction was
+completed with the browser model instead.
+
+The timestamp assertions document behavior on these particular clips only.
+They are regression expectations, not runtime rules, clinical thresholds,
+independent validation data, sensitivity, specificity or predictive accuracy.
+
+live-fall-poses.json: Additional real-time Chrome playback measurements from the
+same local worker on 2026-10-22. Captures brief occlusion/reacquisition during
+descent; coordinates rounded to five decimals, visibility to four.

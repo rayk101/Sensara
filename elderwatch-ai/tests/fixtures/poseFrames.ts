@@ -2,7 +2,7 @@ import type { PoseFrame } from "../../src/lib/poseEvidence";
 import type { PoseLandmark } from "../../src/lib/types";
 export function pose(kind: "upright" | "lean" | "fallen" | "neck" | "outside" = "upright"): PoseLandmark[] {
   const points = Array.from({ length: 33 }, () => ({ x: .5, y: .5, z: 0, visibility: 1 }));
-  const center = kind === "outside" ? .96 : .5;
+  const center = kind === "outside" ? .93 : .5;
   points[0] = { ...points[0], x: center, y: .15 };
   points[11] = { ...points[11], x: center - .07, y: .3 };
   points[12] = { ...points[12], x: center + .07, y: .3 };

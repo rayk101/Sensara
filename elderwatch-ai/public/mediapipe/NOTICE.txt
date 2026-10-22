@@ -1,0 +1,16 @@
+Locally served MediaPipe assets
+
+Runtime: @mediapipe/tasks-vision 0.10.14, copied from the installed npm package.
+vision_bundle.js is the unmodified vision_bundle.cjs, loaded by the classic
+worker with an exports object. The WASM loader requires classic importScripts.
+Runtime source/license: https://github.com/google-ai-edge/mediapipe
+Upstream license: Apache-2.0.
+
+Model: Google MediaPipe Pose Landmarker Full, float16, version 1.
+Source: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task
+Documentation: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker
+
+These assets perform pose estimation. They are not a medically validated fall
+or choking diagnostic model. Footage is processed in browser workers locally.
+The app sends bounded landmark windows to its own authenticated observation
+endpoint; no video frames are sent to Google for inference.

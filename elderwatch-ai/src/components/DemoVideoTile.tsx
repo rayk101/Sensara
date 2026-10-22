@@ -129,10 +129,10 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
   const activeColor = currentStatus.severity === "urgent" ? urgentColor : currentStatus.severity === "assist" ? assistColor : watchColor;
 
   return (
-    <div data-feed-id={config.id} data-observation={currentStatus.available ? currentStatus.severity : "unknown"} data-tracking={pose.status} className={`rounded-xl overflow-hidden border-2 transition-all duration-500 ${SEVERITY_BORDER[priority]}`}>
+    <div data-feed-id={config.id} data-observation={currentStatus.available ? currentStatus.severity : "unknown"} data-tracking={pose.status} className={`rounded-xl overflow-hidden border-2 transition-all duration-500 ${currentStatus.available ? SEVERITY_BORDER[priority] : "border-slate-400"}`}>
       {(sessionError || pose.error || recording.statusMessage) && <p role="status" className="bg-amber-50 px-3 py-2 text-xs">{sessionError || pose.error || recording.statusMessage}</p>}
       {/* Tile header */}
-      <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${SEVERITY_HEADER_BG[priority]}`}>
+      <div className={`px-3 py-2 flex items-center justify-between gap-2 transition-colors duration-500 ${currentStatus.available ? SEVERITY_HEADER_BG[priority] : "bg-slate-700"}`}>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {!currentStatus.available ? <span className="text-xs text-white">UNKNOWN · {pose.status === "loading" ? "Loading body tracking" : "Tracking unavailable"}</span> : <><span className="text-[10px] text-white">{isPaused ? "Last observation" : "Observation"}</span><SafetyBadge severity={priority} size="sm" pulse={!isPaused && priority !== "stable"} /></>}

@@ -1,3 +1,4 @@
+import { measuredScenario, pose } from "./fixtures/poseFrames";
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -119,7 +120,7 @@ test("fresh normal evidence uses recovery window; camera loss never clears activ
   const { updateSession } = await import("../src/lib/platform/sessions");
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const { body, patient, session } = await fixture();
-  const normal = { ...body, source: "live_camera", signals: { visible: true, isLyingDown: false, movementScore: 0.2, postureAngle: 0, secondsStill: 0, insideSafeZone: true } };
+  const normal = { ...body, source: "live_camera", videoTime: 6, aspect: 16 / 9, poseFrames: measuredScenario(1) };
   await submitIncident({ ...body, severity: "watch", eventType: "unsafe_posture" });
   const observe = () => submitDetection({ ...normal, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   await observe();
@@ -136,8 +137,7 @@ test("closed camera episodes require normal evidence before rearming; refresh ca
   const { submitDetection } = await import("../src/lib/platform/incidents");
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const { body, patient } = await fixture();
-  const signals = { visible: true, isLyingDown: true, movementScore: 0.01, postureAngle: 80, secondsStill: 12, insideSafeZone: true };
-  const input = { ...body, source: "live_camera", signals };
+  const input = { ...body, source: "live_camera", videoTime: 6, aspect: 16 / 9, poseFrames: measuredScenario(0) };
   const event = await submitIncident(input);
   const freshSession = await startSession({ residentId: patient.id, source: "live_camera", deviceId: "test", consent: true });
   const refresh = { ...input, sessionId: freshSession.id, sourceEventId: randomUUID() };
@@ -145,11 +145,11 @@ test("closed camera episodes require normal evidence before rearming; refresh ca
   await transitionIncident(event._id!, "acknowledged"); await transitionIncident(event._id!, "resolved", "Caregiver", "Fictional check complete");
   t.mock.timers.tick(1000);
   await assert.rejects(submitIncident({ ...refresh, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() }));
-  const normal = { ...refresh, signals: { ...signals, isLyingDown: false, postureAngle: 0, secondsStill: 0, movementScore: 0.2 } };
+  const normal = { ...refresh, poseFrames: measuredScenario(1) };
   await submitDetection({ ...normal, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   t.mock.timers.tick(6000);
   await submitDetection({ ...normal, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
-  const watching = await submitIncident({ ...refresh, signals: { ...normal.signals, postureAngle: 45, secondsBadPosture: 4 }, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
+  const watching = await submitIncident({ ...refresh, poseFrames: measuredScenario(1).map(f => ({ ...f, landmarks: pose("lean") })), sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   assert.equal(watching.severity, "watch");
   const next = await submitIncident({ ...refresh, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   assert.notEqual(next._id, event._id); assert.equal(next._id, watching._id); assert.equal(next.severity, "urgent");

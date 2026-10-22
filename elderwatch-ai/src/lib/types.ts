@@ -61,6 +61,8 @@ export interface SafetySignals {
   secondsHighMovement?: number;      // continuous seconds of sustained high movement (seizure detection)
   handsNearThroatSeconds?: number;   // continuous seconds with hands near throat area (choking)
   secondsLyingDown?: number;         // continuous seconds the resident has been detected lying down
+  bothArmsHanging?: boolean;       // visible extended arms directed downward
+  secondsSlumped?: number;         // continuous leaned torso + both hanging arms
   secondsBadPosture?: number;        // continuous seconds postureAngle has exceeded the watch threshold
   majorBodyMovementScore?: number;   // movement score using only torso/head landmarks (excl. wrists)
   leftHandNearThroat?: boolean;      // left wrist/index within throat proximity this frame

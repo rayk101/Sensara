@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import PoseCamera from "@/components/PoseCamera";
 import { MOCK_RESIDENTS } from "@/lib/mockData";
-import { DEFAULT_SAFE_ZONE, clampSafeZone, DETECTION_THRESHOLDS } from "@/lib/poseHelpers";
+import { DEFAULT_SAFE_ZONE, clampSafeZone } from "@/lib/poseHelpers";
+import { POSE_POLICY } from "@/lib/poseEvidence";
 import { usePoseDetection } from "@/hooks/usePoseDetection";
 import { useResidentMonitor } from "@/hooks/useResidentMonitor";
 import { useMonitoringSession } from "@/hooks/useMonitoringSession";
@@ -70,6 +71,7 @@ export default function Dashboard() {
   const [patientError, setPatientError] = useState("");
   const [patientLoadAttempt, setPatientLoadAttempt] = useState(0);
   const [cameraId, setCameraId] = useState("");
+  const [cameraAttempt, setCameraAttempt] = useState(0);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const seizureDetectionEnabled = false;
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
@@ -109,9 +111,8 @@ export default function Dashboard() {
   const selectedResident = residents.find((r) => r.id === selectedResidentId) ?? residents[0];
 
   const monitoringRequested = !isPaused && monitoringConsent && mainTab === "live-camera";
-  const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera");
-  const monitoringPaused = !monitoringRequested || !sessionId;
-  useEffect(() => { setIsPaused(true); setMonitoringConsent(false); }, [selectedResident?.id, mainTab]);
+  const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera", cameraAttempt);
+  const monitoringPaused = !monitoringRequested;
   const { signals, classification, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     selectedResident ?? null,
     safeZone,
@@ -119,10 +120,12 @@ export default function Dashboard() {
   );
 
   // Classify each frame directly so pose and monitoring state render together.
-  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream } = usePoseDetection(
-    monitoringRequested && !!sessionId,
+  const { landmarks, videoRef, canvasRef, status: poseStatus, errorMessage, stream, retry: retryCamera } = usePoseDetection(
+    monitoringRequested,
     processFrame, cameraId, selectedResident?.id
   );
+
+  const restartCamera = () => { setCameraAttempt(n => n + 1); setIsPaused(false); retryCamera(); };
 
   useEffect(() => {
     if (sessionId && ["no-webcam", "error"].includes(poseStatus)) {
@@ -282,15 +285,15 @@ export default function Dashboard() {
           <div className="flex items-center gap-1 bg-sensara-forest-900/60 border border-sensara-forest-700 rounded-xl p-1 mx-auto">
             <MainTabButton
               active={mainTab === "multi-feed"}
-              onClick={() => setMainTab("multi-feed")}
+              onClick={() => { setIsPaused(true); setMainTab("multi-feed"); }}
               label="Multi-Feed Demo"
               desc="4-room command center"
             />
             <MainTabButton
               active={mainTab === "live-camera"}
-              onClick={() => setMainTab("live-camera")}
+              onClick={() => { setMonitoringConsent(true); setIsPaused(false); setMainTab("live-camera"); }}
               label="Live Camera Demo"
-              desc="Webcam + pose detection"
+              desc="Opens camera + monitoring"
             />
           </div>
 
@@ -336,13 +339,13 @@ export default function Dashboard() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sensara-border bg-white p-4">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold" role="status">{mainTab === "multi-feed" ? (demo.anyRunning ? `${demo.runningFeedIds.length} of ${demoFeedIds.length} feeds running` : "Demo paused — play a feed below or start all four") : (isPaused ? "Camera monitoring paused" : "Monitoring enabled")}</p>
-            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">Starting authorizes {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, 15-second incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Audio playback has its own control on the right.</p>
+            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">{mainTab === "live-camera" ? "Opening Live Camera starts" : "Starting authorizes"} {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, 15-second incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Audio playback has its own control on the right.</p>
           </div>
           {mainTab === "multi-feed" && demo.anyRunning && !demo.allRunning && <button onClick={demo.pauseAll} className="rounded-lg border border-sensara-border px-4 py-2 text-sm font-semibold hover:bg-sensara-warm-100">Pause all</button>}
           <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{controlLabel}</button>
         </div>
-        {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError}</p>}
-        {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => { setIsPaused(true); setCameraId(e.target.value); }}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
+        {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError} <button className="underline" onClick={restartCamera}>Reconnect monitoring</button></p>}
+        {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => setCameraId(e.target.value)}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
         <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="min-w-0">
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
@@ -403,12 +406,15 @@ export default function Dashboard() {
                     errorMessage={errorMessage}
                     safeZone={safeZone}
                     severity={classification.severity}
+                    observationAvailable={signals.visible && poseStatus === "running" && !monitoringPaused}
+                    onRetry={restartCamera}
                     editMode={safeZoneEditMode}
                     onSafeZoneChange={handleSafeZoneChange}
                     insideSafeZone={signals.insideSafeZone}
                   />
                 </div>
 
+                <p className="text-xs text-sensara-warm-700">Keep your shoulders and hands in view for gestures, and your hips in view for posture/fall tracking. Test without applying neck pressure or deliberately falling.</p>
                 {/* Safe zone controls */}
                 <div className="flex items-center gap-3 flex-wrap bg-white border border-sensara-border rounded-lg px-3 py-2">
                   <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -436,8 +442,8 @@ export default function Dashboard() {
                 {/* Vision Debug: choking detection state */}
                 <div className="bg-white border border-sensara-border rounded-lg px-3 py-2 shadow-sm">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] text-sensara-warm-600 font-medium uppercase tracking-wider">Vision Debug — Choking Detection</span>
-                    <span className="text-[10px] text-sensara-warm-400">threshold: {DETECTION_THRESHOLDS.chokingHandDurationSeconds}s</span>
+                    <span className="text-[10px] text-sensara-warm-600 font-medium uppercase tracking-wider">Observed hand gesture</span>
+                    <span className="text-[10px] text-sensara-warm-400">threshold: {POSE_POLICY.gestureHold}s</span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
                     <DebugPill
@@ -467,8 +473,8 @@ export default function Dashboard() {
                         <div
                           className="h-full rounded-full transition-all duration-200"
                           style={{
-                            width: `${Math.min(100, ((signals.handsNearThroatSeconds ?? 0) / DETECTION_THRESHOLDS.chokingHandDurationSeconds) * 100)}%`,
-                            background: (signals.handsNearThroatSeconds ?? 0) >= DETECTION_THRESHOLDS.chokingHandDurationSeconds
+                            width: `${Math.min(100, ((signals.handsNearThroatSeconds ?? 0) / POSE_POLICY.gestureHold) * 100)}%`,
+                            background: (signals.handsNearThroatSeconds ?? 0) >= POSE_POLICY.gestureHold
                               ? "#ef4444"
                               : (signals.handsNearThroatSeconds ?? 0) > 0
                               ? "#f97316"
@@ -504,6 +510,16 @@ export default function Dashboard() {
           <Administration residents={residents} onSaved={() => window.location.reload()} />
         </div>
         <aside aria-label="Alerts and notifications" className="min-w-0 space-y-4 lg:sticky lg:top-32 lg:max-h-[calc(100dvh-9rem)] lg:overflow-y-auto lg:pr-1">
+        {mainTab === "live-camera" && (
+                <ResidentCard
+                  resident={selectedResident}
+                  classification={classification}
+                  signals={signals}
+                  monitoringAvailable={poseStatus === "running" && !monitoringPaused}
+                  residents={residents}
+                  onSelectResident={setSelectedResidentId}
+                />
+        )}
         <IncidentCenter onEvents={setPersistedEvents} />
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-sensara-border bg-white px-4 py-3 text-xs">
           <span>Photon iMessage: {photonConfigured ? "Configured · see notification outcomes" : "Not configured"}</span>
@@ -523,13 +539,7 @@ export default function Dashboard() {
 
           {mainTab === "multi-feed" ? <DemoAlertPanel alerts={feedAlerts} events={persistedEvents} isPaused={!demo.anyRunning} /> : (
               <div className="flex flex-col gap-4">
-                <ResidentCard
-                  resident={selectedResident}
-                  classification={classification}
-                  signals={signals}
-                  residents={residents}
-                  onSelectResident={setSelectedResidentId}
-                />
+
 
                 <div className="bg-white rounded-xl border border-sensara-border flex flex-col shadow-sm">
                   <div className="flex border-b border-sensara-divider">

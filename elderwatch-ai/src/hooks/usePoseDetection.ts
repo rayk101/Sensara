@@ -1,141 +1,74 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PoseLandmark } from "@/lib/types";
+import { useVideoPose, type PoseFrameContext } from "./useVideoPose";
 
 export type PoseStatus = "idle" | "loading" | "running" | "no-webcam" | "error";
 
-export interface PoseDetectionResult {
-  landmarks: PoseLandmark[] | null;
-  videoRef: React.RefObject<HTMLVideoElement>;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-  status: PoseStatus;
-  errorMessage: string | null;
-  stream: MediaStream | null;
-}
-
-const MEDIAPIPE_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
-
-export function usePoseDetection(
-  enabled = true,
-  onFrame?: (landmarks: PoseLandmark[] | null) => void,
-  deviceId?: string,
-  patientId?: string
-): PoseDetectionResult {
-  const onFrameRef = useRef(onFrame);
-  useEffect(() => { onFrameRef.current = onFrame; }, [onFrame]);
+/** Camera acquisition and local worker initialization start independently. */
+export function usePoseDetection(enabled = true,
+  onFrame?: (landmarks: PoseLandmark[] | null, context: PoseFrameContext) => void,
+  deviceId?: string, patientId?: string) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [landmarks, setLandmarks] = useState<PoseLandmark[] | null>(null);
-  const [status, setStatus] = useState<PoseStatus>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [cameraStatus, setCameraStatus] = useState<PoseStatus>("idle");
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const key = `${patientId}:${deviceId}:${attempt}`;
+  const pose = useVideoPose(videoRef, enabled && cameraStatus !== "no-webcam" && cameraStatus !== "error", onFrame, key);
+  const frameCallback = useRef(onFrame);
+  useEffect(() => { frameCallback.current = onFrame; }, [onFrame]);
 
   useEffect(() => {
-    setLandmarks(null);
-    setStream(null);
-    setErrorMessage(null);
-    if (!enabled) {
-      setStatus("idle");
-      return;
-    }
-
+    setStream(null); setCameraError(null);
+    if (!enabled) { setCameraStatus("idle"); return; }
     let cancelled = false;
     let camera: MediaStream | null = null;
-    let detector: PoseLandmarker | null = null;
-    let frame = 0;
-    let lastVideoTime = -1;
     const video = videoRef.current;
-
     const release = () => {
-      cancelAnimationFrame(frame);
       camera?.getTracks().forEach(track => track.stop());
-      detector?.close();
-      detector = null;
       if (video?.srcObject === camera) video.srcObject = null;
     };
-
-    async function init() {
-      setStatus("loading");
+    setCameraStatus("loading");
+    const timeout = setTimeout(() => {
+      if (!cancelled) setCameraError("Waiting for camera access. Check the browser's camera permission prompt, or retry.");
+    }, 12000);
+    void (async () => {
       try {
-        camera = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }) }, audio: false,
-        });
-      } catch {
-        if (!cancelled) {
-          setStatus("no-webcam");
-          setErrorMessage("Camera unavailable. Allow camera access, then switch away and back to retry.");
-        }
-        return;
-      }
-      if (cancelled || !video) { release(); return; }
-      camera.getVideoTracks().forEach(track => track.addEventListener("ended", () => {
-        if (cancelled) return;
-        release(); setStream(null); setLandmarks(null); setStatus("error"); setErrorMessage("Camera disconnected. Monitoring is unavailable; existing incidents remain active.");
-      }, { once: true }));
-      try {
+        camera = await navigator.mediaDevices.getUserMedia({ video: {
+          width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 },
+          ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
+        }, audio: false });
+        clearTimeout(timeout);
+        if (cancelled || !video) { release(); return; }
+        camera.getVideoTracks().forEach(track => track.addEventListener("ended", () => {
+          if (cancelled) return;
+          release(); setStream(null); setCameraStatus("error");
+          setCameraError("Camera disconnected. Existing incidents remain active. Retry camera to reconnect.");
+          frameCallback.current?.(null, { time: video.currentTime, aspect: video.videoWidth / video.videoHeight || 4 / 3 });
+        }, { once: true }));
         video.srcObject = camera;
+        // Preview is available before model initialization finishes.
         await video.play();
         if (cancelled) { release(); return; }
-        const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
-        const vision = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
-        if (cancelled) { release(); return; }
-        const create = (delegate: "GPU" | "CPU") => PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate },
-          runningMode: "VIDEO", numPoses: 1,
-          minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-        try { detector = await create("GPU"); }
-        catch (error) {
-          if (cancelled) return;
-          detector = await create("CPU");
-        }
-        if (cancelled) { release(); return; }
-        const canvas = canvasRef.current;
-        if (canvas) {
-          canvas.width = video.videoWidth || 640;
-          canvas.height = video.videoHeight || 480;
-        }
-        setStream(camera);
-        setStatus("running");
-        const loop = () => {
-          if (cancelled || !detector) return;
-          if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-            lastVideoTime = video.currentTime;
-            try {
-              const result = detector.detectForVideo(video, performance.now());
-              const nextLandmarks = result.landmarks[0] ?? null;
-              // Both updates originate from this frame, rather than chaining a
-              // second state update through a landmark-dependent effect.
-              setLandmarks(nextLandmarks);
-              onFrameRef.current?.(nextLandmarks);
-            } catch (error) {
-              release();
-              setStream(null);
-              setLandmarks(null);
-              setStatus("error");
-              setErrorMessage("Pose detection stopped. Switch away and back to retry.");
-              return;
-            }
-          }
-          frame = requestAnimationFrame(loop);
-        };
-        frame = requestAnimationFrame(loop);
-      } catch {
-        release();
+        setStream(camera); setCameraError(null); setCameraStatus("running");
+      } catch (error) {
+        clearTimeout(timeout); release();
         if (!cancelled) {
-          setStream(null);
-          setStatus("error");
-          setErrorMessage("Could not load pose detection. Check your network connection and retry.");
+          setStream(null); setCameraStatus("no-webcam");
+          const denied = error instanceof Error && error.name === "NotAllowedError";
+          setCameraError(denied ? "Camera access is blocked. Allow it in this site's browser settings, then retry camera." : "Camera unavailable. Check that it is connected and not in use by another application, then retry.");
         }
       }
-    }
-    void init();
-    return () => { cancelled = true; release(); };
-  }, [enabled, deviceId, patientId]);
+    })();
+    return () => { cancelled = true; clearTimeout(timeout); release(); };
+  }, [enabled, deviceId, patientId, attempt]);
 
-  return { landmarks, videoRef, canvasRef, status, errorMessage, stream };
+  const status: PoseStatus = !enabled ? "idle" : cameraStatus === "no-webcam" || cameraStatus === "error" ? cameraStatus
+    : pose.status === "error" ? "error" : cameraStatus === "running" && pose.status === "tracking" ? "running" : "loading";
+  return { landmarks: enabled && status === "running" ? pose.lastFrame?.landmarks ?? null : null,
+    videoRef, canvasRef, status, errorMessage: cameraError || pose.error, stream,
+    retry: () => { setCameraStatus("loading"); setAttempt(n => n + 1); } };
 }

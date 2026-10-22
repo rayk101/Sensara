@@ -3,7 +3,7 @@ import { getResidentById } from "../db/residents";
 import { createSafetyEvent } from "../db/events";
 import { getDb, getMongoClient, isMongoEnabled } from "../mongodb";
 import { EventType, ResidentStatus, type SafetyEvent, type SafetySignals } from "../types";
-import { RECOMMENDED_ACTIONS, classifyResidentSafety } from "../classifySafety";
+import { RECOMMENDED_ACTIONS } from "../classifySafety";
 import { ApiError, assertPatient, currentActor } from "./auth";
 import { getSession } from "./sessions";
 import { identifier, text, isoTime } from "./validation";
@@ -45,9 +45,15 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
       input = { ...input, ...measured };
     } catch { throw new ApiError(400, "Valid body-tracking evidence is required; video time alone cannot trigger an alert"); }
   } else if ((input.source ?? "live_camera") === "live_camera") {
-    const signals = input.signals as SafetySignals | undefined;
-    if (!signals || typeof signals !== "object") throw new ApiError(400, "Camera evidence is required");
-    input = { ...input, ...classifyResidentSafety(signals, { seizureDetectionEnabled: false }) };
+    try {
+      if (typeof input.videoTime !== "number" || !Number.isFinite(input.videoTime) || input.videoTime < 0) throw new Error();
+      const aspect = input.aspect;
+      if (typeof aspect !== "number" || !Number.isFinite(aspect) || aspect < .25 || aspect > 4) throw new Error();
+      // Zone coordinates are a camera configuration, never patient identity or a recipient.
+      const zone = input.safeZone as import("../types").SafeZone | undefined;
+      if (zone && (!Number.isFinite(zone.x) || !Number.isFinite(zone.width) || zone.x < 0 || zone.width <= 0 || zone.x + zone.width > 1)) throw new Error();
+      input = { ...input, ...analyzePoseWindow(validatePoseFrames(input.poseFrames, input.videoTime), aspect, zone) };
+    } catch { throw new ApiError(400, "Valid camera body-tracking evidence is required"); }
   }
   if (!Object.values(ResidentStatus).includes(input.severity as never) ||
       !Object.values(EventType).includes(input.eventType as never)) throw new ApiError(400, "Invalid incident classification");
@@ -64,7 +70,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const signals = (input.signals ?? { isLyingDown: false, movementScore: 0, postureAngle: 0, secondsStill: 0, insideSafeZone: true, visible: false }) as SafetySignals;
   if (!signals || typeof signals !== "object" || ["isLyingDown", "insideSafeZone", "visible"].some(key => typeof (signals as unknown as Record<string, unknown>)[key] !== "boolean") || [signals.movementScore, signals.postureAngle, signals.secondsStill].some(n => typeof n !== "number" || !Number.isFinite(n) || n < 0)) throw new ApiError(400, "Invalid safety signals");
   for (const [key, value] of Object.entries(signals)) {
-    if (["secondsOutsideSafeZone", "secondsHighMovement", "handsNearThroatSeconds", "secondsLyingDown", "secondsBadPosture", "majorBodyMovementScore"].includes(key) && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) throw new ApiError(400, "Invalid detector timing evidence");
+    if (["secondsOutsideSafeZone", "secondsHighMovement", "handsNearThroatSeconds", "secondsLyingDown", "secondsBadPosture", "secondsSlumped", "majorBodyMovementScore"].includes(key) && (typeof value !== "number" || !Number.isFinite(value) || value < 0)) throw new ApiError(400, "Invalid detector timing evidence");
   }
   const requestId = text(input.sourceEventId ?? input.idempotencyKey, "source event ID", 200);
   const detectedAt = isoTime(input.detectedAt ?? new Date().toISOString());
@@ -86,7 +92,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const event: Omit<SafetyEvent, "_id"> = { residentId, residentName: patient.name, room: patient.room,
     eventType: input.eventType as SafetyEvent["eventType"], severity: input.severity as SafetyEvent["severity"], confidence: input.confidence,
     reason: text(input.reason, "reason", 2000), recommendedAction: RECOMMENDED_ACTIONS[String(input.eventType)] ?? "Check the resident and follow facility response procedures.",
-    ...(source === "multi_feed_demo" ? { detectionMethod: "mediapipe_pose_v1" as const } : {}),
+    ...(["multi_feed_demo", "live_camera"].includes(String(source)) ? { detectionMethod: "mediapipe_pose_v1" as const } : {}),
     signals, source: source as SafetyEvent["source"], sessionId, idempotencyKey, status: "open", initialStatus: "open",
     version: 1, episodeId: randomUUID(), activeEpisodeKey, sourceEventId: requestId, correlationId: randomUUID(), detectedAt,
     firstUrgentAt: urgent ? now : null,

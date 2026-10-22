@@ -1,3 +1,110 @@
+Sustained slumped-posture demo rule — 2026-10-22
+Added the requested >2-second urgent rule to the shared camera/video classifier:
+leaned torso >=45 degrees plus BOTH visible, extended, downward arms. Shoulder,
+elbow and wrist landmarks must be in-frame with visibility >=0.5. Elbow angle
+>=150 degrees and downward segment/displacement gates distinguish hanging arms
+from reaching. These are demo engineering thresholds, not clinical criteria.
+At exactly 2 seconds it remains WATCHING; the next qualifying sample after 2
+seconds becomes urgent unsafe_posture with reason "Sustained slumped posture".
+Lost landmarks, posture interruption, pauses and time gaps reset the hold.
+Added hanging-arm confirmation and elapsed hold to the right-hand observation.
+
+Verification: lint, TypeScript, 65 tests and isolated production build passed.
+New synthetic tests cover timing boundary, upright/reaching/one-arm negatives,
+missing/off-screen wrists, occlusion/gaps and server-side promotion of one
+incident with independent video, voice and assigned-recipient messaging intents.
+Recorded-video regression tests still pass. No physical pose or live provider
+notification was tested for this rule; screenshot alone cannot establish the
+two-second duration or visibility of cropped wrists. Existing response lifecycle
+and configured provider delivery behavior remain in use.
+
+Live camera startup and shared movement policy — 2026-10-22
+
+Implemented
+- Selecting Live Camera now starts camera acquisition and monitoring directly;
+  no additional in-app Start/Allow step. Pause releases the camera. Browser
+  camera permission remains required and is never bypassed.
+- Replaced the old external CDN/model and main-thread inference with the same
+  locally served MediaPipe worker/model used for the four video feeds. Camera,
+  model and authenticated session start independently. Preview is visible while
+  inference loads. Permission waiting, model timeouts, errors and Retry camera
+  have explicit UI; retry starts a fresh session after interruption.
+- Camera observations use the same poseEvidence policy and server validation
+  as demo video. Signal-only live requests are rejected. Real source aspect
+  ratio is used; paused/gapped evidence cannot count toward gesture duration.
+- Upper-body hand-to-neck observations can produce WATCHING then possible
+  distress URGENT without requiring visible hips. Missing hips never establish
+  a normal full-body observation or fall. Full-body fall transitions still
+  require measured descent and sustained posture. No clinical diagnosis.
+- Current camera observation is at the top of the right sidebar, separate from
+  saved incidents. Missing tracking/loading displays UNKNOWN, including the
+  canvas badge. Removed the legacy invented confidence percentage for these
+  measured observations. Existing independent incident workflows are reused.
+
+Verified
+- Lint, TypeScript and 60 automated tests passed; isolated production build
+  passed. Includes real recorded landmark regressions, raw camera request
+  validation, upper-body gestures, resource cleanup and preview-before-model.
+- Real FaceTime webcam in Chrome: selecting the tab requested access without
+  an additional app button. Accepted the expected browser permission prompt;
+  actual 640x480 video, skeleton and live worker started. Camera observations
+  reached the isolated server for the correct fictional patient/session.
+- Pause released capture. Subsequent start with permission already granted
+  reached Camera Live in 1,649ms (one observed run, not a startup guarantee).
+- Isolated browser test had no console errors. Tests used provider-disabled
+  in-memory persistence; no test recordings or external messages were sent.
+
+Limits
+Synthetic gestures/recorded landmarks verify escalation policy. No physical
+fall, choking or dangerous demonstration was requested or performed. Actual
+provider delivery, uploaded evidence and clinical accuracy were not retested.
+First-use permission and OS/browser restrictions cannot be removed by app code.
+
+Measured demo detection correction — 2026-10-22
+
+Implemented
+Replaced all four time-scripted demo classifiers with locally served Google
+MediaPipe Pose Landmarker Full running in browser workers. Frames supply real
+landmarks; the authenticated server validates and reclassifies the same bounded
+evidence before using the existing incident/outbox workflow. Video timestamp
+alone can no longer trigger an incident. Added visible skeletons, UNKNOWN for
+lost/implausible tracking, worker timeouts/cleanup, and unscored movement rules.
+
+Separated current/last observed severity from unresolved patient priority.
+A saved urgent incident remains explicitly urgent in its own notice and the
+right sidebar; it no longer forces the current video frame's border/badge red.
+Play/Pause per feed and global Start demo/Pause all remain functional.
+
+Verified
+- Lint, TypeScript and all 57 automated tests passed.
+- Isolated production build passed, leaving the existing port-3000 server up.
+- Reviewed the actual four clips and measured their MediaPipe output in Chrome.
+  Stored 5 Hz measurements and provenance as regression fixtures. Fall reaching
+  stayed below urgent, sampled fall escalated at 11.2s, normal sitting/walking
+  stayed stable, leaving view became UNKNOWN, sustained neck gesture escalated
+  at 7.8s. These are measured sample-run results, not time triggers.
+- Final uninterrupted four-feed browser trace: fall WATCHING at 8.11s,
+  UNKNOWN at 9.31s, WATCHING at 10.51s and URGENT at 11.50s. Normal clip had
+  no urgent observation. Wandering lost tracking at 11.51s; neck gesture became
+  urgent at 8.11s. Added a real-time occlusion/reacquisition regression after
+  discovering that an overly short upright-reference window missed descent.
+- Verified yellow WATCHING current-frame card alongside a separate old urgent
+  priority notice, right-hand notifications, actual skeletons and Pause all.
+- Local isolated in-memory persistence and server observation ingestion worked.
+  No new Atlas writes, S3 uploads, ElevenLabs calls or Photon messages were
+  tested in this change. Real model inference is not a mocked provider result.
+- Main localhost:3000 patient API returned 200. Refreshed browser loaded all
+  four cards and was left paused. Old incidents were not modified or cleared.
+
+Limits
+Rules remain engineering heuristics, not medically validated thresholds or
+probabilities. Population fall statistics are not frame-level classifiers.
+Occlusion, camera perspective and variable sampling can change outcomes.
+No sensitivity/specificity, injury diagnosis or confirmed choking is claimed.
+No clinical deployment readiness is established by these four staged clips.
+Live Camera retains its existing detector; the new measured classifier replaces
+the four demo scripts, with the same shared incident response service.
+
 Individual demo feed controls — 2026-10-22
 Implemented per-feed Play/Pause, global Start demo / Pause all, running-feed
 count, and filtered current detector alerts for paused feeds. Existing saved

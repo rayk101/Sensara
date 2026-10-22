@@ -1,18 +1,9 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import {
-  calculatePostureAngle,
-  detectLyingDown,
-  calculateMovementScore,
-  calculateMajorBodyMovementScore,
-  isInsideSafeZone,
-  isPoseVisible,
-  detectHandsNearThroatDetails,
-  DEFAULT_SAFE_ZONE,
-  DETECTION_THRESHOLDS,
-} from "@/lib/poseHelpers";
-import { classifyResidentSafety } from "@/lib/classifySafety";
+import { DEFAULT_SAFE_ZONE } from "@/lib/poseHelpers";
+import { analyzePoseWindow, POSE_POLICY, type PoseFrame } from "@/lib/poseEvidence";
+import type { PoseFrameContext } from "./useVideoPose";
 import type {
   PoseLandmark,
   SafetySignals,
@@ -22,13 +13,6 @@ import type {
   SafeZone,
 } from "@/lib/types";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// useResidentMonitor — Converts raw pose landmarks into safety signals, runs
-// the classifier each frame, maintains the local event timeline, and persists
-// meaningful events to the backend with per-event-type cooldowns.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MOVEMENT_THRESHOLD = 0.02; // below → count as "still"
 const MAX_TIMELINE_LENGTH = 50;
 
 interface MonitorOptions {
@@ -50,23 +34,11 @@ export function useResidentMonitor(
 ) {
   const sessionId = options.sessionId;
   const isPaused = options.isPaused ?? false;
-  const seizureDetectionEnabled = options.seizureDetectionEnabled ?? false;
 
-  // ── Time-tracking refs ───────────────────────────────────────────────────────
-  const prevLandmarksRef = useRef<PoseLandmark[] | null>(null);
-  const stillSinceRef = useRef<number | null>(null);
-  const outsideSafeZoneSinceRef = useRef<number | null>(null);
-  const highMovementSinceRef = useRef<number | null>(null);
-  const handsNearThroatSinceRef = useRef<number | null>(null);
-  const lyingDownSinceRef = useRef<number | null>(null);
-  const badPostureSinceRef = useRef<number | null>(null);
 
-  // Per-event-type last-persisted timestamps (replaces global EVENT_DEBOUNCE_MS)
-  const lastPersistedRef = useRef<Record<string, number>>({});
-  const lastObservation = useRef({ at: 0, severity: "" });
-  // Latch: once possible_fall fires, hold it until the person is clearly upright
-  const possibleFallLatchedRef = useRef(false);
-
+  const frames = useRef<PoseFrame[]>([]);
+  const lastObservation = useRef({ at: 0, severity: "", sessionId: "" });
+  const pending = useRef(false);
   const [state, setState] = useState<MonitorState>(() => ({
     signals: {
       isLyingDown: false,
@@ -90,20 +62,11 @@ export function useResidentMonitor(
   const residentIdRef = useRef(resident?.id);
   useEffect(() => { residentIdRef.current = resident?.id; }, [resident?.id]);
 
-  const resetTimers = useCallback(() => {
-    prevLandmarksRef.current = null;
-    stillSinceRef.current = null;
-    outsideSafeZoneSinceRef.current = null;
-    highMovementSinceRef.current = null;
-    handsNearThroatSinceRef.current = null;
-    lyingDownSinceRef.current = null;
-    badPostureSinceRef.current = null;
-    possibleFallLatchedRef.current = false;
-  }, []);
+  const resetTimers = useCallback(() => { frames.current = []; }, []);
 
   useEffect(() => {
     resetTimers();
-    lastPersistedRef.current = {};
+    lastObservation.current = { at: 0, severity: "", sessionId: "" };
     setLatestEvent(null);
     setPersistenceError(null);
     setState(prev => ({ ...prev, timeline: [], classification: {
@@ -144,159 +107,32 @@ export function useResidentMonitor(
     }
   }, [upsertEvent, sessionId]);
 
-  // Invoked by the camera frame callback, never by a state-derived effect.
-  const processFrame = useCallback((landmarks: PoseLandmark[] | null) => {
+  // Runs in the worker-result callback; no chained landmark-state effect.
+  const processFrame = useCallback((landmarks: PoseLandmark[] | null, context?: PoseFrameContext) => {
     if (!resident || isPaused) return;
-
     const now = Date.now();
-
-    // ── Compute base signals ─────────────────────────────────────────────────
-    const visible = landmarks !== null && isPoseVisible(landmarks);
-
-    let movementScore = 0;
-    let majorBodyMovementScore = 0;
-    let postureAngle = 0;
-    let isLyingDown = false;
-    let insideSafeZone = true;
-    let secondsStill = 0;
-    let secondsOutsideSafeZone = 0;
-    let secondsHighMovement = 0;
-    let handsNearThroatSeconds = 0;
-    let leftHandNearThroat = false;
-    let rightHandNearThroat = false;
-    let bothHandsNearThroat = false;
-    let secondsLyingDown = 0;
-    let secondsBadPosture = 0;
-
-    if (visible && landmarks) {
-      postureAngle = calculatePostureAngle(landmarks);
-      isLyingDown = detectLyingDown(landmarks);
-      insideSafeZone = isInsideSafeZone(landmarks, safeZone);
-
-      if (prevLandmarksRef.current) {
-        movementScore = calculateMovementScore(landmarks, prevLandmarksRef.current);
-        majorBodyMovementScore = calculateMajorBodyMovementScore(landmarks, prevLandmarksRef.current);
-      } else {
-        movementScore = 1;
-        majorBodyMovementScore = 1;
-      }
-
-      // Track stillness
-      if (movementScore < MOVEMENT_THRESHOLD) {
-        if (stillSinceRef.current === null) stillSinceRef.current = now;
-        secondsStill = (now - stillSinceRef.current) / 1000;
-      } else {
-        stillSinceRef.current = null;
-        secondsStill = 0;
-      }
-
-      // Track time outside safe zone
-      if (!insideSafeZone) {
-        if (outsideSafeZoneSinceRef.current === null) outsideSafeZoneSinceRef.current = now;
-        secondsOutsideSafeZone = (now - outsideSafeZoneSinceRef.current) / 1000;
-      } else {
-        outsideSafeZoneSinceRef.current = null;
-        secondsOutsideSafeZone = 0;
-      }
-
-      // Track sustained high movement (for experimental seizure detection)
-      if (movementScore > DETECTION_THRESHOLDS.seizureMovementThreshold) {
-        if (highMovementSinceRef.current === null) highMovementSinceRef.current = now;
-        secondsHighMovement = (now - highMovementSinceRef.current) / 1000;
-      } else {
-        highMovementSinceRef.current = null;
-        secondsHighMovement = 0;
-      }
-
-      // Track hands near throat (for choking detection)
-      const chokingResult = detectHandsNearThroatDetails(landmarks);
-      leftHandNearThroat = chokingResult.leftHandNearThroat;
-      rightHandNearThroat = chokingResult.rightHandNearThroat;
-      bothHandsNearThroat = chokingResult.bothHandsNearThroat;
-      if (chokingResult.detected) {
-        if (handsNearThroatSinceRef.current === null) handsNearThroatSinceRef.current = now;
-        handsNearThroatSeconds = (now - handsNearThroatSinceRef.current) / 1000;
-      } else {
-        handsNearThroatSinceRef.current = null;
-        handsNearThroatSeconds = 0;
-      }
-
-      // Track lying-down duration
-      if (isLyingDown) {
-        if (lyingDownSinceRef.current === null) lyingDownSinceRef.current = now;
-        secondsLyingDown = (now - lyingDownSinceRef.current) / 1000;
-      } else {
-        lyingDownSinceRef.current = null;
-        secondsLyingDown = 0;
-      }
-
-      // Track bad-posture duration (angle > 30 covers both the watch and assist thresholds)
-      if (postureAngle > 30) {
-        if (badPostureSinceRef.current === null) badPostureSinceRef.current = now;
-        secondsBadPosture = (now - badPostureSinceRef.current) / 1000;
-      } else {
-        badPostureSinceRef.current = null;
-        secondsBadPosture = 0;
-      }
-
-      prevLandmarksRef.current = landmarks;
-    } else {
-      resetTimers();
-    }
-
-    const signals: SafetySignals = {
-      isLyingDown,
-      movementScore,
-      postureAngle,
-      secondsStill,
-      insideSafeZone,
-      visible,
-      secondsOutsideSafeZone,
-      secondsHighMovement,
-      handsNearThroatSeconds,
-      secondsLyingDown,
-      secondsBadPosture,
-      majorBodyMovementScore,
-      leftHandNearThroat,
-      rightHandNearThroat,
-      bothHandsNearThroat,
-    };
-
-    let classification = classifyResidentSafety(signals, {
-      seizureDetectionEnabled: seizureDetectionEnabled,
-    });
-
-    // Latch possible_fall — once the resident is detected lying still, keep the
-    // urgent classification until they're clearly upright again. Without this,
-    // small movements (breathing, shifting) reset secondsStill and the alert
-    // oscillates, spamming the timeline and TTS on every 10-second cycle.
-    if (classification.eventType === "possible_fall") {
-      possibleFallLatchedRef.current = true;
-    }
-    if (!signals.isLyingDown) {
-      possibleFallLatchedRef.current = false;
-    }
-    if (possibleFallLatchedRef.current && signals.isLyingDown && classification.eventType !== "possible_fall") {
-      classification = {
-        severity: "urgent",
-        eventType: "possible_fall",
-        reason: "Resident appears to be lying down with minimal movement — caregiver should check",
-        confidence: 0.9,
-      };
-    }
-
-    if (sessionId && (now - lastObservation.current.at >= 3000 || classification.severity !== lastObservation.current.severity)) {
-      lastObservation.current = { at: now, severity: classification.severity };
+    const time = context?.time ?? performance.now() / 1000;
+    const aspect = context?.aspect ?? 4 / 3;
+    if (time <= (frames.current.at(-1)?.time ?? -1)) frames.current = [];
+    frames.current = [...frames.current.filter(f => time - f.time <= POSE_POLICY.windowSeconds), { time, landmarks }].slice(-80);
+    const measured = analyzePoseWindow(frames.current, aspect, safeZone);
+    setState(prev => ({ ...prev, signals: measured.signals, classification: measured }));
+    const observed = measured.available ? measured.severity : "unknown";
+    if (sessionId && !pending.current && (now - lastObservation.current.at >= 1000 || observed !== lastObservation.current.severity || sessionId !== lastObservation.current.sessionId)) {
+      pending.current = true;
+      lastObservation.current = { at: now, severity: observed, sessionId };
       const patientId = resident.id;
-      void fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "live_camera", sessionId, residentId: patientId, signals, sourceEventId: crypto.randomUUID(), detectedAt: new Date(now).toISOString() }) }).then(async response => {
+      void fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        source: "live_camera", sessionId, residentId: patientId, poseFrames: frames.current,
+        videoTime: time, aspect, safeZone, sourceEventId: crypto.randomUUID(), detectedAt: new Date(now).toISOString(),
+      }), signal: AbortSignal.timeout(10000) }).then(async response => {
         const body = await response.json();
         if (!response.ok) throw new Error();
         if (patientId === residentIdRef.current) { if (body.event) upsertEvent(body.event); setPersistenceError(null); }
-      }).catch(() => { if (patientId === residentIdRef.current) setPersistenceError("Observation not saved. Remote notification is unavailable or unconfirmed."); });
+      }).catch(() => { if (patientId === residentIdRef.current) setPersistenceError("Observation not saved. Remote notification is unavailable or unconfirmed."); })
+        .finally(() => { pending.current = false; });
     }
-
-    setState(prev => ({ ...prev, signals, classification }));
-  }, [resident, safeZone, sessionId, upsertEvent, resetTimers, isPaused, seizureDetectionEnabled]);
+  }, [resident, safeZone, sessionId, upsertEvent, isPaused]);
 
   const refreshHistory = useCallback(async () => {
     if (!resident) return;

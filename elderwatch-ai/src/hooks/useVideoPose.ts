@@ -2,7 +2,11 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { analyzePoseWindow, POSE_POLICY, type PoseFrame } from "@/lib/poseEvidence";
 
-export function useVideoPose(videoRef: RefObject<HTMLVideoElement>, enabled: boolean) {
+export interface PoseFrameContext { time: number; aspect: number }
+export function useVideoPose(videoRef: RefObject<HTMLVideoElement>, enabled: boolean,
+  onFrame?: (landmarks: PoseFrame["landmarks"], context: PoseFrameContext) => void, resetKey?: string) {
+  const callback = useRef(onFrame);
+  useEffect(() => { callback.current = onFrame; }, [onFrame]);
   const frames = useRef<PoseFrame[]>([]);
   const [observation, setObservation] = useState(() => analyzePoseWindow([]));
   const [lastFrame, setLastFrame] = useState<PoseFrame | null>(null);
@@ -16,12 +20,14 @@ export function useVideoPose(videoRef: RefObject<HTMLVideoElement>, enabled: boo
     if (!video) return;
     let cancelled = false, busy = false, ready = false, lastTime = -1, lastResultAt = performance.now(), stale = false;
     let frameDeadline: ReturnType<typeof setTimeout> | undefined;
-    const worker = new Worker('/pose-worker.js');
+    let worker: Worker;
+    try { worker = new Worker('/pose-worker.js'); }
+    catch { setStatus('error'); setError('This browser could not start body tracking.'); return; }
     setStatus("loading");
     const fail = (message: string) => {
       if (cancelled) return;
-      ready = false; busy = false; clearTimeout(frameDeadline); worker.terminate(); frames.current = [];
-      setStatus("error"); setError(message); setObservation(analyzePoseWindow([]));
+      ready = false; busy = false; clearTimeout(startup); clearTimeout(frameDeadline); worker.terminate(); frames.current = [];
+      setStatus("error"); setError(message); setObservation(analyzePoseWindow([])); setLastFrame(null); callback.current?.(null, { time: video.currentTime, aspect: video.videoWidth / video.videoHeight || 4 / 3 });
     };
     const startup = setTimeout(() => fail("Body tracking load timed out. Pause and play to retry."), 30000);
     worker.onerror = () => fail("Body tracking failed. Pause and play to retry.");
@@ -37,23 +43,24 @@ export function useVideoPose(videoRef: RefObject<HTMLVideoElement>, enabled: boo
         if (data.time < (frames.current.at(-1)?.time ?? -1)) frames.current = [];
         frames.current = [...frames.current.filter(f => data.time - f.time <= POSE_POLICY.windowSeconds), { time: data.time, landmarks: data.landmarks }].slice(-80);
         setLastFrame(frames.current.at(-1) ?? null);
-        setObservation(analyzePoseWindow(frames.current));
+        setObservation(analyzePoseWindow(frames.current, video.videoWidth / video.videoHeight || 16 / 9));
+        callback.current?.(data.landmarks, { time: data.time, aspect: video.videoWidth / video.videoHeight || 4 / 3 });
       }
     };
     worker.postMessage({ type: 'init' });
     const interval = setInterval(async () => {
-      if (ready && !stale && performance.now() - lastResultAt > 2000) { stale = true; frames.current = []; setObservation(analyzePoseWindow([])); }
+      if (ready && !stale && performance.now() - lastResultAt > 2000) { stale = true; frames.current = []; setObservation(analyzePoseWindow([])); setLastFrame(null); callback.current?.(null, { time: video.currentTime, aspect: video.videoWidth / video.videoHeight || 4 / 3 }); }
       if (!ready || busy || video.paused || video.seeking || video.readyState < 2 || video.currentTime === lastTime) return;
       busy = true; lastTime = video.currentTime;
       const time = lastTime;
       frameDeadline = setTimeout(() => fail("Body tracking stopped responding. Pause and play to retry."), 5000);
       try {
-        const bitmap = await createImageBitmap(video, { resizeWidth: 640, resizeHeight: 360 });
-        if (cancelled) { bitmap.close(); return; }
-        worker.postMessage({ type: 'frame', bitmap, time, timestamp: performance.now() }, [bitmap]);
+        const bitmap = await createImageBitmap(video, { resizeWidth: 640, resizeHeight: Math.round(640 * (video.videoHeight / video.videoWidth || 9 / 16)) });
+        if (cancelled || !ready) { bitmap.close(); return; }
+        worker.postMessage({ type: 'frame', bitmap, time, timestamp: performance.now(), aspect: video.videoWidth / video.videoHeight || 16 / 9 }, [bitmap]);
       } catch { fail("Video frame could not be read for body tracking."); }
     }, 200);
     return () => { cancelled = true; clearTimeout(startup); clearTimeout(frameDeadline); clearInterval(interval); worker.terminate(); frames.current = []; };
-  }, [enabled, videoRef]);
+  }, [enabled, videoRef, resetKey]);
   return { observation, frames, lastFrame, status, error };
 }

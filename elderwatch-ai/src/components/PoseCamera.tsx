@@ -22,6 +22,8 @@ interface PoseCameraProps {
   errorMessage: string | null;
   safeZone: SafeZone;
   severity: ResidentStatusValue;
+  observationAvailable?: boolean;
+  onRetry?: () => void;
   /** When true the user can drag the safe zone on the canvas */
   editMode?: boolean;
   /** Called with updated zone coordinates while the user drags */
@@ -63,6 +65,8 @@ export default function PoseCamera({
   errorMessage,
   safeZone,
   severity,
+  observationAvailable = true,
+  onRetry,
   editMode = false,
   onSafeZoneChange,
   insideSafeZone = true,
@@ -315,8 +319,8 @@ export default function PoseCamera({
       }
 
       // 5. Severity status chip (top-left)
-      const chipColor = SEVERITY_COLORS[severity];
-      const chipLabel = severity.toUpperCase();
+      const chipColor = observationAvailable && status === "running" ? SEVERITY_COLORS[severity] : "#94a3b8";
+      const chipLabel = observationAvailable && status === "running" ? (severity === "watch" ? "WATCHING" : severity.toUpperCase()) : "UNKNOWN";
       ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(8, 8, 110, 28, 6);
@@ -334,15 +338,16 @@ export default function PoseCamera({
     // landmarks/safeZone/severity are read via refs so this effect only needs
     // to restart when the canvas/video refs change (which never happens).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [landmarks, safeZone, severity, editMode, insideSafeZone, videoRef, canvasRef]);
+  }, [landmarks, safeZone, severity, observationAvailable, status, editMode, insideSafeZone, videoRef, canvasRef]);
 
   // ── Status overlay messages ────────────────────────────────────────────────
   const overlayContent = (() => {
     if (status === "loading") {
       return (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/80 text-white gap-3">
+        <div className="absolute bottom-3 left-3 right-3 flex items-center gap-3 rounded-lg bg-gray-900/80 p-3 text-white">
           <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-gray-300">Loading pose detection model…</p>
+          <p className="text-sm text-gray-300">{errorMessage || "Starting camera and local body tracking…"}</p>
+          {errorMessage && onRetry && <button onClick={onRetry}>Retry camera</button>}
         </div>
       );
     }
@@ -353,7 +358,8 @@ export default function PoseCamera({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.893L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
           </svg>
           <p className="text-sm text-red-300">{errorMessage || "Camera unavailable"}</p>
-          <p className="text-xs text-gray-400">Safety classification is paused.</p>
+          <p className="text-xs text-gray-400">Monitoring unavailable. Saved incidents remain active.</p>
+          {onRetry && <button onClick={onRetry} className="rounded bg-white px-3 py-2 text-sm text-slate-900">Retry camera</button>}
         </div>
       );
     }
