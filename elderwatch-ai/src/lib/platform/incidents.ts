@@ -7,9 +7,10 @@ import { RECOMMENDED_ACTIONS, classifyResidentSafety } from "../classifySafety";
 import { ApiError, assertPatient, currentActor } from "./auth";
 import { getSession } from "./sessions";
 import { identifier, text, isoTime } from "./validation";
-import { getScriptedStatus, DEMO_SCENARIOS } from "../demoScenarios";
+import { DEMO_SCENARIOS } from "../demoScenarios";
 import { getCaregivers, getSettings } from "./settings";
 import { getInMemoryStore } from "../mockData";
+import { analyzePoseWindow, validatePoseFrames } from "../poseEvidence";
 import { memory } from "./store";
 import { ObjectId } from "mongodb";
 export function episodeCategory(type: string) { return ["possible_fall", "fall_risk", "unsafe_posture"].includes(type) ? "fall" : type; }
@@ -39,7 +40,10 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   if (input.source === "multi_feed_demo") {
     const scenario = DEMO_SCENARIOS.find(s => s.id === input.scenarioId && s.residentId === residentId);
     if (!scenario || typeof input.videoTime !== "number" || !Number.isFinite(input.videoTime) || input.videoTime < 0 || input.videoTime > 3600) throw new ApiError(400, "Invalid demo scenario evidence");
-    input = { ...input, ...getScriptedStatus(scenario.id, input.videoTime) };
+    try {
+      const measured = analyzePoseWindow(validatePoseFrames(input.poseFrames, input.videoTime));
+      input = { ...input, ...measured };
+    } catch { throw new ApiError(400, "Valid body-tracking evidence is required; video time alone cannot trigger an alert"); }
   } else if ((input.source ?? "live_camera") === "live_camera") {
     const signals = input.signals as SafetySignals | undefined;
     if (!signals || typeof signals !== "object") throw new ApiError(400, "Camera evidence is required");
@@ -71,7 +75,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const activeEpisodeKey = `${residentId}:${episodeCategory(String(input.eventType))}`;
   const idempotencyKey = createHash("sha256").update(`${residentId}:${sessionId ?? "manual"}:${requestId}`).digest("hex");
   const now = new Date().toISOString();
-  const observed = source === "live_camera" && !signals.visible ? "unknown" : String(input.severity);
+  const observed = (source === "live_camera" || source === "multi_feed_demo") && !signals.visible ? "unknown" : String(input.severity);
   const observation = (prior: Record<string, unknown> | null | undefined) => {
     // This window stabilizes the UI and rearms episodes; it makes no safety claim.
     const normalSince = observed === "stable" ? (typeof prior?.normalSince === "string" ? prior.normalSince : detectedAt) : null;
@@ -82,6 +86,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const event: Omit<SafetyEvent, "_id"> = { residentId, residentName: patient.name, room: patient.room,
     eventType: input.eventType as SafetyEvent["eventType"], severity: input.severity as SafetyEvent["severity"], confidence: input.confidence,
     reason: text(input.reason, "reason", 2000), recommendedAction: RECOMMENDED_ACTIONS[String(input.eventType)] ?? "Check the resident and follow facility response procedures.",
+    ...(source === "multi_feed_demo" ? { detectionMethod: "mediapipe_pose_v1" as const } : {}),
     signals, source: source as SafetyEvent["source"], sessionId, idempotencyKey, status: "open", initialStatus: "open",
     version: 1, episodeId: randomUUID(), activeEpisodeKey, sourceEventId: requestId, correlationId: randomUUID(), detectedAt,
     firstUrgentAt: urgent ? now : null,
@@ -98,7 +103,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const merge = (prior: SafetyEvent): Partial<SafetyEvent> => {
     if (prior.firstUrgentAt || !urgent) return {};
     return { severity: "urgent", eventType: event.eventType, confidence: event.confidence, reason: event.reason,
-      recommendedAction: event.recommendedAction, firstUrgentAt: now, workflow: event.workflow, notificationsQueued: false };
+      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, firstUrgentAt: now, workflow: event.workflow, notificationsQueued: false };
   };
   if (!isMongoEnabled()) {
     const ingestion = memory("event_ingestions").get(idempotencyKey);

@@ -1,3 +1,4 @@
+import { measuredScenario } from "../tests/fixtures/poseFrames";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
@@ -32,7 +33,7 @@ async function main() {
   for (const [i, scenario] of DEMO_SCENARIOS.entries()) {
     const session = await startSession({ residentId: scenario.residentId, source: "multi_feed_demo", deviceId: scenario.id, consent: true });
     await saveCaregiver({ id: `test-staff-${i}`, name: "Fictional test recipient", channel: "imessage", destination: "+15551234567", patientIds: [scenario.residentId], active: true, urgentAlerts: true });
-    const input = { residentId: scenario.residentId, source: "multi_feed_demo", sessionId: session.id, scenarioId: scenario.id, videoTime: [11, 20, 14, 5][i], sourceEventId: randomUUID(), detectedAt: new Date().toISOString() };
+    const input = { residentId: scenario.residentId, source: "multi_feed_demo", sessionId: session.id, scenarioId: scenario.id, videoTime: 6, poseFrames: measuredScenario(i), sourceEventId: randomUUID(), detectedAt: new Date().toISOString() };
     if (i === 1) { await assert.rejects(submitIncident(input)); continue; }
     const results = await Promise.all(Array.from({ length: 5 }, () => submitIncident(input)));
     assert.equal(new Set(results.map(r => r._id)).size, 1);

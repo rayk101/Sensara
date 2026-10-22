@@ -131,7 +131,7 @@ export default function FacilityAlertPanel({
       <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-sensara-divider shrink-0">
         <div>
           <h3 className="text-sensara-forest-900 font-semibold text-sm">Facility Alert Panel</h3>
-          <p className="text-sensara-warm-600 text-[10px] mt-0.5">{isPaused ? "Monitoring paused" : "Simulated multi-room monitoring"}</p>
+          <p className="text-sensara-warm-600 text-[10px] mt-0.5">{isPaused ? "Monitoring paused" : "Measured video observations"}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex items-center gap-1.5 bg-sensara-warm-100 border border-sensara-divider rounded-full px-2.5 py-1">
@@ -207,7 +207,7 @@ export default function FacilityAlertPanel({
                   <div className="flex items-center gap-1.5 text-[9px] text-sensara-warm-500 flex-wrap">
                     <span>Active {formatWaitTime(alert.alertSince)}</span>
                     <span>·</span>
-                    <span>{Math.round(alert.confidence * 100)}/100 heuristic</span>
+                    <span>Movement rule · not a medical probability</span>
                     {isCared && <span className="text-green-600 font-medium">✓ In care</span>}
                     {isSaved && <span className="text-sensara-forest-600 font-medium">✓ Saved</span>}
                   </div>
@@ -236,7 +236,7 @@ export default function FacilityAlertPanel({
 
       <div className="px-4 py-2 border-t border-sensara-divider shrink-0">
         <p className="text-[9px] text-sensara-warm-400 text-center">
-          Simulated alerts · Not for clinical use · Prototype only
+          Recorded demo footage · Pose-based heuristics · Human review required
         </p>
       </div>
     </div>

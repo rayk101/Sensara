@@ -220,7 +220,7 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
                   )}
 
                   <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-sensara-warm-600">
-                    <span>Heuristic score: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}/100</b></span>
+                    <span>{event.confidence > 0 ? <>Heuristic score: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}/100</b></> : "Movement rule — no calibrated probability"}</span>
                     <span>Posture: <b className="text-sensara-forest-900">{Math.round(event.signals?.postureAngle ?? 0)}°</b></span>
                     <span>Still: <b className="text-sensara-forest-900">{Math.round(event.signals?.secondsStill ?? 0)}s</b></span>
                   </div>

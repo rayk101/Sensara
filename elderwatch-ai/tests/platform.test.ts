@@ -6,7 +6,7 @@ import { startSession } from "../src/lib/platform/sessions";
 import { submitIncident } from "../src/lib/platform/incidents";
 import { transitionIncident, getSafetyEvent, getRecentEvents } from "../src/lib/db/events";
 import { saveResident, getResidentById } from "../src/lib/db/residents";
-import { DEMO_SCENARIOS, getScriptedStatus } from "../src/lib/demoScenarios";
+import { DEMO_SCENARIOS } from "../src/lib/demoScenarios";
 import { MOCK_RESIDENTS } from "../src/lib/mockData";
 import { memory } from "../src/lib/platform/store";
 import { updateSettings, saveCaregiver } from "../src/lib/platform/settings";
@@ -22,22 +22,9 @@ async function fixture() {
   const body = { source: "manual", sessionId: session.id, residentId: id, severity: "urgent", eventType: "possible_fall", reason: "Fictional test", confidence: 0.9, sourceEventId: randomUUID(), detectedAt: new Date().toISOString() };
   return { patient, session, body };
 }
-test("all four original scenarios preserve patient/room identities and original thresholds", () => {
-  const expected = [
-    ["Eleanor Brooks", "Room 204", 11, "possible_fall", "urgent"],
-    ["Robert Hayes", "Room 118", 20, "normal", "stable"],
-    ["Margaret Chen", "Room 312", 14, "wandering", "watch"],
-    ["Daniel Price", "Lounge Area", 5, "possible_choking", "urgent"],
-  ];
-  DEMO_SCENARIOS.forEach((s, i) => {
-    const patient = MOCK_RESIDENTS.find(p => p.id === s.residentId)!;
-    const [name, room, seconds, type, severity] = expected[i];
-    assert.equal(patient.name, name); assert.equal(patient.room, room);
-    assert.equal(getScriptedStatus(s.id, seconds as number).eventType, type);
-    assert.equal(getScriptedStatus(s.id, seconds as number).severity, severity);
-  });
-  assert.equal(getScriptedStatus("feed1", 6).severity, "watch");
-  assert.equal(getScriptedStatus("feed1", 0).severity, "stable");
+test("all four video sources retain their trusted patient identities", () => {
+  const names = ["Eleanor Brooks", "Robert Hayes", "Margaret Chen", "Daniel Price"];
+  DEMO_SCENARIOS.forEach((scenario, i) => assert.equal(MOCK_RESIDENTS.find(p => p.id === scenario.residentId)?.name, names[i]));
 });
 test("concurrent retries and later frames share one authoritative active episode", async () => {
   const { body } = await fixture();

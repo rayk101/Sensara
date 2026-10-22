@@ -78,6 +78,7 @@ export interface SafetyClassification {
 
 // ─── A persisted safety event (stored in MongoDB) ────────────────────────────
 export interface SafetyEvent {
+  detectionMethod?: "mediapipe_pose_v1";
   _id?: string;
   idempotencyKey?: string;
   sessionId?: string | null;

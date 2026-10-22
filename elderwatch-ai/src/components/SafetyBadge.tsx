@@ -17,7 +17,7 @@ const CONFIGS: Record<ResidentStatusValue, { label: string; bg: string; text: st
     dot: "bg-green-400",
   },
   watch: {
-    label: "WATCH",
+    label: "WATCHING",
     bg: "bg-yellow-950/60",
     text: "text-yellow-300",
     border: "border-yellow-600",

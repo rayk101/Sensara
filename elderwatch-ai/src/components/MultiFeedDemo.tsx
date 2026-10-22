@@ -40,7 +40,7 @@ export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, residents,
     });
   }, []);
 
-  const alerts: FeedAlert[] = useMemo(() => DEMO_FEEDS.filter(feed => runningFeedIds.includes(feed.id)).map(feed => {
+  const alerts: FeedAlert[] = useMemo(() => DEMO_FEEDS.filter(feed => runningFeedIds.includes(feed.id) && feedStates[feed.id]?.available).map(feed => {
     const state = feedStates[feed.id] ?? defaultFeedState;
     return {
       feedId: feed.id,
