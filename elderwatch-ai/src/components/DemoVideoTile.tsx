@@ -28,6 +28,7 @@ interface DemoVideoTileProps {
   config: DemoFeedConfig;
   activeUrgent?: boolean;
   isPaused?: boolean;
+  onTogglePlayback: () => void;
   onStatusChange?: (feedId: string, status: DemoFeedStatus) => void;
 }
 
@@ -57,7 +58,7 @@ const SEVERITY_HEADER_BG: Record<string, string> = {
   urgent: "bg-red-900/90",
 };
 
-export default function DemoVideoTile({ config, onStatusChange, isPaused = false, activeUrgent = false }: DemoVideoTileProps) {
+export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback, isPaused = false, activeUrgent = false }: DemoVideoTileProps) {
   const { sessionId, sessionError } = useMonitoringSession(config.residentId, !isPaused, "multi_feed_demo", config.id);
   const [capturedStream, setCapturedStream] = useState<MediaStream | null>(null);
   const [savedEvent, setSavedEvent] = useState<SafetyEvent | null>(null);
@@ -198,7 +199,7 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
         {!videoError && (isPaused || !sessionId || playbackStatus !== "playing") && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/40 px-4 text-center text-white">
             <p className="rounded-lg bg-black/60 px-3 py-2 text-sm font-semibold">{isPaused ? "Paused" : sessionError ? "Monitoring unavailable" : !sessionId ? "Starting monitoring…" : playbackStatus === "blocked" ? "Playback paused by browser" : "Loading video…"}</p>
-            {isPaused && <p className="text-xs">Select Start demo above to play all four feeds.</p>}
+            {isPaused && <p className="text-xs">Play this feed below, or select Start demo to play all four.</p>}
             {!isPaused && sessionId && playbackStatus === "blocked" && <button className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-sensara-forest-900" onClick={retryPlayback}>Retry playback</button>}
           </div>
         )}
@@ -227,6 +228,14 @@ export default function DemoVideoTile({ config, onStatusChange, isPaused = false
           {isPaused ? "Monitoring paused" : playbackStatus !== "playing" ? "Waiting for video playback" : currentStatus.severity !== "stable" ? currentStatus.reason : "Monitoring…"}
         </p>
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onTogglePlayback}
+            aria-label={`${isPaused ? "Play" : "Pause"} ${config.resident} feed`}
+            aria-describedby="monitoring-consent"
+            className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-sensara-forest-900 hover:bg-sensara-forest-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            {isPaused ? "▶ Play" : "⏸ Pause"}
+          </button>
           {saveMsg && (
             <span className={`text-[10px] ${saveMsg === "Saved" ? "text-green-400" : "text-gray-400"}`}>
               {saveMsg}

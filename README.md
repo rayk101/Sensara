@@ -50,6 +50,13 @@ The persistent Node worker polls MongoDB every three seconds with atomic claims,
 
 ## Configuration
 
+If Atlas fails with `querySrv EBADRESP` or DNS timeouts, the optional
+`MONGODB_DNS_SERVERS=1.1.1.1,8.8.8.8` setting selects DNS servers inside the Node
+process. It does not change macOS settings. Restart the app after changing it.
+This only addresses DNS: Atlas network access rules, credentials and TLS still
+apply. The dashboard distinguishes database outages from sign-in failures and
+provides Retry connection instead of leaving a dead-end loading screen.
+
 Secrets are environment variables only. Nonsecret preferences and staff notification assignments persist in MongoDB. The dashboard provides patient create/edit/deactivate and integration preferences. Staff recipients are managed through the admin-only `/api/staff` API; each record has `id`, `name`, `active`, `urgentAlerts`, `patientIds`, `channel`, and `destination`. An authenticated staff account's patient scope is in `STAFF_ACCOUNTS_JSON`; notification assignments do not grant login access.
 
 | Service | Variables / requirements |

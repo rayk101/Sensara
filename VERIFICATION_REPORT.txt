@@ -1,3 +1,21 @@
+Connectivity recovery — 2026-10-22
+Resolved two observed causes: system DNS returned EBADRESP/ETIMEOUT for the
+Atlas SRV query, and Atlas's network access list lacked the current public IP.
+Enabled optional process-local MONGODB_DNS_SERVERS in the private environment.
+With explicit user approval, added only the current /32 IP to Atlas, without
+expiry. Atlas reports the entry Active. Existing rules, credentials and TLS
+verification remain unchanged. If the network's public IP changes again, that
+new address will need its own authorized entry.
+
+Verified live health HTTP 200 and four patient records HTTP 200 (approximately
+1.2–1.5 seconds in two measured requests). The read-only API/media smoke test
+passed. Chrome's Retry connection button loaded the full dashboard on port
+3000. No new provider messages or audio-generation tests were requested.
+Added a 12-second client request deadline, distinct authentication/database
+error handling, an empty-account message and Retry connection. Lint, type
+checks and all 45 automated tests pass. The app remains in development mode;
+first-request compilation can still add startup time.
+
 Sensara verification report — 2026-10-21
 
 Result

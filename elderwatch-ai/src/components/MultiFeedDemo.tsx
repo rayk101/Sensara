@@ -18,7 +18,7 @@ const defaultFeedState: FeedState = {
   alertSince: 0,
 };
 
-export default function MultiFeedDemo({ isPaused = false, residents, events, onAlertsChange }: { isPaused?: boolean; residents: ResidentProfile[]; events: SafetyEvent[]; onAlertsChange: (alerts: FeedAlert[]) => void }) {
+export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, residents, events, onAlertsChange }: { runningFeedIds: string[]; onToggleFeed: (id: string) => void; residents: ResidentProfile[]; events: SafetyEvent[]; onAlertsChange: (alerts: FeedAlert[]) => void }) {
   const DEMO_FEEDS: DemoFeedConfig[] = useMemo(() => DEMO_SCENARIOS.flatMap(scenario => {
     const patient = residents.find(r => r.id === scenario.residentId && r.active !== false);
     return patient ? [{ ...scenario, resident: patient.name, room: patient.room }] : [];
@@ -40,7 +40,7 @@ export default function MultiFeedDemo({ isPaused = false, residents, events, onA
     });
   }, []);
 
-  const alerts: FeedAlert[] = useMemo(() => DEMO_FEEDS.map(feed => {
+  const alerts: FeedAlert[] = useMemo(() => DEMO_FEEDS.filter(feed => runningFeedIds.includes(feed.id)).map(feed => {
     const state = feedStates[feed.id] ?? defaultFeedState;
     return {
       feedId: feed.id,
@@ -53,7 +53,7 @@ export default function MultiFeedDemo({ isPaused = false, residents, events, onA
       confidence: state.confidence,
       alertSince: state.alertSince,
     };
-  }), [DEMO_FEEDS, feedStates]);
+  }), [DEMO_FEEDS, feedStates, runningFeedIds]);
   useEffect(() => { onAlertsChange(alerts); }, [alerts, onAlertsChange]);
 
   return (
@@ -68,7 +68,8 @@ export default function MultiFeedDemo({ isPaused = false, residents, events, onA
               key={feed.id}
               config={feed}
               activeUrgent={events.some(e => e.residentId === feed.residentId && e.severity === "urgent" && !["resolved", "dismissed"].includes(e.status ?? ""))}
-              isPaused={isPaused}
+              isPaused={!runningFeedIds.includes(feed.id)}
+              onTogglePlayback={() => onToggleFeed(feed.id)}
               onStatusChange={handleStatusChange}
             />
           ))}

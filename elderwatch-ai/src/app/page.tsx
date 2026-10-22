@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import PoseCamera from "@/components/PoseCamera";
 import { MOCK_RESIDENTS } from "@/lib/mockData";
@@ -18,6 +18,8 @@ import AnalyticsCard from "@/components/AnalyticsCard";
 import AIAssistant from "@/components/AIAssistant";
 import AudioMonitor from "@/components/AudioMonitor";
 import MultiFeedDemo, { DemoAlertPanel } from "@/components/MultiFeedDemo";
+import { useDemoControls } from "@/hooks/useDemoControls";
+import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
 import type { FeedAlert } from "@/components/FacilityAlertPanel";
 import type { ResidentProfile, SafetyEvent, VideoClip, SafeZone } from "@/lib/types";
 
@@ -66,6 +68,7 @@ export default function Dashboard() {
   const [authRequired, setAuthRequired] = useState(false);
   const [persistedEvents, setPersistedEvents] = useState<SafetyEvent[]>([]);
   const [patientError, setPatientError] = useState("");
+  const [patientLoadAttempt, setPatientLoadAttempt] = useState(0);
   const [cameraId, setCameraId] = useState("");
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const seizureDetectionEnabled = false;
@@ -73,8 +76,18 @@ export default function Dashboard() {
   const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
   const [activeTab, setActiveTab] = useState<"monitor" | "history">("monitor");
   const [mainTab, setMainTab] = useState<MainTab>("multi-feed");
+  const demoFeedIds = useMemo(() => DEMO_SCENARIOS.filter(scenario => residents.some(resident => resident.id === scenario.residentId && resident.active !== false)).map(scenario => scenario.id), [residents]);
+  const demo = useDemoControls(demoFeedIds, mainTab === "multi-feed");
+  const controlsPaused = mainTab === "multi-feed" ? !demo.anyRunning : isPaused;
+  const startAvailable = mainTab === "multi-feed" ? !demo.allRunning : isPaused;
+  const controlLabel = mainTab === "multi-feed" ? (demo.allRunning ? "Pause all" : "Start demo") : (isPaused ? "Start camera" : "Pause monitoring");
 
   const toggleMonitoring = () => {
+    if (mainTab === "multi-feed") {
+      if (demo.allRunning) demo.pauseAll();
+      else demo.startAll();
+      return;
+    }
     if (isPaused) setMonitoringConsent(true);
     setIsPaused(paused => !paused);
   };
@@ -169,16 +182,29 @@ export default function Dashboard() {
 
   // ── Check service status on mount ─────────────────────────────────────────
   useEffect(() => {
-    fetch("/api/residents")
-      .then(async (r) => { if (r.status === 401) setAuthRequired(true); if (!r.ok) throw new Error("Patient records could not be loaded"); return r.json(); })
+    const controller = new AbortController();
+    let disposed = false;
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    setPatientError("");
+    fetch("/api/residents", { signal: controller.signal })
+      .then(async (r) => { if (r.status === 401) { if (!disposed) setAuthRequired(true); return null; } if (!r.ok) throw new Error("The patient database is temporarily unreachable. Please retry in a moment."); return r.json(); })
       .then((d) => {
-        if (Array.isArray(d.residents) && d.residents.length) {
-          setResidents(d.residents.filter((r: ResidentProfile) => r.active !== false));
-          setSelectedResidentId(id => d.residents.some((resident: ResidentProfile) => resident.id === id) ? id : d.residents[0].id);
+        if (disposed || !d) return;
+        const active: ResidentProfile[] = Array.isArray(d.residents) ? d.residents.filter((r: ResidentProfile) => r.active !== false) : [];
+        if (active.length) {
+          setResidents(active);
+          setSelectedResidentId(id => active.some(resident => resident.id === id) ? id : active[0].id);
+          setMongoConnected(d.mongoConnected === true);
+        } else {
+          setPatientError("No active patients are assigned to this account. Ask an administrator to check patient access.");
         }
       })
-      .catch(() => { setMongoConnected(false); setPatientError("Patient records are unavailable. Check your connection or sign in."); });
+      .catch((error: unknown) => { if (!disposed) { setMongoConnected(false); setPatientError(controller.signal.aborted ? "Loading took too long. Please retry; the server may still be starting." : error instanceof Error ? error.message : "Could not reach the server. Please retry."); } })
+      .finally(() => clearTimeout(timeout));
+    return () => { disposed = true; clearTimeout(timeout); controller.abort(); };
+  }, [patientLoadAttempt]);
 
+  useEffect(() => {
     fetch("/api/status")
       .then((r) => r.json())
       .then((d) => {
@@ -224,7 +250,11 @@ export default function Dashboard() {
   };
 
   if (authRequired) return <SignIn />;
-  if (!selectedResident) return <main className="p-8" role="status">{patientError || "Loading authorized patient records…"}</main>;
+  if (!selectedResident) return <main className="flex min-h-screen items-center justify-center bg-sensara-cream p-6"><section className="w-full max-w-md rounded-xl border border-sensara-border bg-white p-6 shadow-sm">
+    <h1 className="text-xl font-semibold text-sensara-forest-900">Sensara</h1>
+    <p className="mt-3 text-sm text-sensara-forest-800" role={patientError ? "alert" : "status"}>{patientError || "Connecting to patient records…"}</p>
+    {patientError ? <button className="mt-4 rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white" onClick={() => { setPatientError(""); setPatientLoadAttempt(n => n + 1); }}>Retry connection</button> : <p className="mt-3 text-xs text-sensara-warm-600">The first visit after starting the development server can take longer while it compiles.</p>}
+  </section></main>;
   return (
     <div className="min-h-screen bg-sensara-cream text-sensara-forest-900 flex flex-col">
 
@@ -266,7 +296,7 @@ export default function Dashboard() {
 
           {/* Pause control */}
           <div className="flex items-center gap-2 flex-wrap justify-end ml-auto">
-            {isPaused && (
+            {controlsPaused && (
               <span className="text-xs font-bold text-yellow-300 bg-yellow-900/80 border border-yellow-600 rounded-lg px-3 py-1.5 animate-pulse">
                 ⏸ PAUSED
               </span>
@@ -274,12 +304,12 @@ export default function Dashboard() {
             <button
               onClick={toggleMonitoring} aria-describedby="monitoring-consent"
               className={`text-xs rounded-lg px-3 py-1.5 transition-colors border font-medium ${
-                isPaused
+                startAvailable
                   ? "bg-sensara-forest-600 hover:bg-sensara-forest-500 text-white border-sensara-forest-500"
                   : "bg-yellow-700/70 hover:bg-yellow-600/80 text-yellow-100 border-yellow-600"
               }`}
             >
-              {isPaused ? (mainTab === "multi-feed" ? "▶ Start demo" : "▶ Start camera") : "⏸ Pause"}
+              {startAvailable ? "▶ " : "⏸ "}{controlLabel}
             </button>
           </div>
         </div>
@@ -305,10 +335,11 @@ export default function Dashboard() {
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sensara-border bg-white p-4">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold">{isPaused ? (mainTab === "multi-feed" ? "Demo paused — start to play all four feeds" : "Camera monitoring paused") : "Monitoring enabled"}</p>
-            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">Starting authorizes {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "these fictional scenarios"}, 15-second incident recordings and configured alerts. Audio playback has its own control on the right.</p>
+            <p className="text-sm font-semibold" role="status">{mainTab === "multi-feed" ? (demo.anyRunning ? `${demo.runningFeedIds.length} of ${demoFeedIds.length} feeds running` : "Demo paused — play a feed below or start all four") : (isPaused ? "Camera monitoring paused" : "Monitoring enabled")}</p>
+            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">Starting authorizes {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, 15-second incident recordings and configured alerts. Start demo plays all four; each feed has its own Play/Pause. Audio playback has its own control on the right.</p>
           </div>
-          <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{isPaused ? (mainTab === "multi-feed" ? "Start demo" : "Start camera") : "Pause monitoring"}</button>
+          {mainTab === "multi-feed" && demo.anyRunning && !demo.allRunning && <button onClick={demo.pauseAll} className="rounded-lg border border-sensara-border px-4 py-2 text-sm font-semibold hover:bg-sensara-warm-100">Pause all</button>}
+          <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{controlLabel}</button>
         </div>
         {sessionError && <p role="alert" className="mb-3 text-red-700">{sessionError}</p>}
         {mainTab === "live-camera" && <label className="mb-3 block text-sm">Camera <select value={cameraId} onChange={e => { setIsPaused(true); setCameraId(e.target.value); }}><option value="">Default camera</option>{cameras.map(c => <option key={c.deviceId} value={c.deviceId}>{c.label || "Camera"}</option>)}</select></label>}
@@ -316,7 +347,7 @@ export default function Dashboard() {
         <div className="min-w-0">
         {/* ── TAB 1: Multi-Feed Demo ──────────────────────────────────────── */}
         <div className={mainTab === "multi-feed" ? "" : "hidden"}>
-          <MultiFeedDemo onAlertsChange={setFeedAlerts} events={persistedEvents} residents={residents} isPaused={isPaused || !monitoringConsent || mainTab !== "multi-feed"} />
+          <MultiFeedDemo onAlertsChange={setFeedAlerts} events={persistedEvents} residents={residents} runningFeedIds={demo.runningFeedIds} onToggleFeed={demo.toggleFeed} />
         </div>
 
         {/* ── TAB 2: Live Camera Demo ─────────────────────────────────────── */}
@@ -490,7 +521,7 @@ export default function Dashboard() {
           </span>
         </div>
 
-          {mainTab === "multi-feed" ? <DemoAlertPanel alerts={feedAlerts} events={persistedEvents} isPaused={isPaused} /> : (
+          {mainTab === "multi-feed" ? <DemoAlertPanel alerts={feedAlerts} events={persistedEvents} isPaused={!demo.anyRunning} /> : (
               <div className="flex flex-col gap-4">
                 <ResidentCard
                   resident={selectedResident}

@@ -10,8 +10,8 @@ async function GETHandler() {
     const residents = await getResidents();
     return NextResponse.json({ residents, mongoConnected: isMongoEnabled() });
   } catch (err) {
-    console.error("GET /api/residents error:", err);
-    return NextResponse.json({ error: "Failed to fetch residents" }, { status: 500 });
+    console.error("Patient database unavailable", { name: err instanceof Error ? err.name : "UnknownError", code: (err as { code?: string })?.code });
+    return NextResponse.json({ error: "The patient database is temporarily unreachable. Please retry in a moment." }, { status: 503 });
   }
 }
 
