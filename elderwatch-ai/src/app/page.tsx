@@ -113,7 +113,7 @@ export default function Dashboard() {
   const monitoringRequested = !isPaused && monitoringConsent && mainTab === "live-camera";
   const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera", cameraAttempt);
   const monitoringPaused = !monitoringRequested;
-  const { signals, classification, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
+  const { signals, classification, observationAvailable, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     selectedResident ?? null,
     safeZone,
     { isPaused: monitoringPaused, seizureDetectionEnabled, sessionId }
@@ -406,7 +406,7 @@ export default function Dashboard() {
                     errorMessage={errorMessage}
                     safeZone={safeZone}
                     severity={classification.severity}
-                    observationAvailable={signals.visible && poseStatus === "running" && !monitoringPaused}
+                    observationAvailable={observationAvailable && poseStatus === "running" && !monitoringPaused}
                     onRetry={restartCamera}
                     editMode={safeZoneEditMode}
                     onSafeZoneChange={handleSafeZoneChange}
@@ -515,6 +515,7 @@ export default function Dashboard() {
                   resident={selectedResident}
                   classification={classification}
                   signals={signals}
+                  observationAvailable={observationAvailable}
                   monitoringAvailable={poseStatus === "running" && !monitoringPaused}
                   residents={residents}
                   onSelectResident={setSelectedResidentId}

@@ -9,6 +9,7 @@ interface ResidentCardProps {
   classification: SafetyClassification;
   signals: SafetySignals;
   monitoringAvailable?: boolean;
+  observationAvailable?: boolean;
   residents: ResidentProfile[];
   onSelectResident: (id: string) => void;
 }
@@ -50,10 +51,11 @@ export default function ResidentCard({
   classification,
   signals,
   monitoringAvailable = true,
+  observationAvailable,
   residents,
   onSelectResident,
 }: ResidentCardProps) {
-  const available = monitoringAvailable && signals.visible;
+  const available = monitoringAvailable && (observationAvailable ?? signals.visible);
   const { severity, eventType, reason, confidence } = classification;
 
   return (
@@ -89,10 +91,10 @@ export default function ResidentCard({
             </span>
           </div>
           <p className="text-sm text-sensara-forest-800">{reason}</p>
-          {available && <p className="text-xs text-sensara-warm-700">Hanging-arm posture: {signals.bothArmsHanging ? "both arms tracked down" : "both arms not confirmed"} · {(signals.secondsSlumped ?? 0).toFixed(1)}s / {POSE_POLICY.slumpHold}s</p>}
+          {available && signals.visible && <p className="text-xs text-sensara-warm-700">Hanging-arm posture: {signals.bothArmsHanging ? "both arms tracked down" : "both arms not confirmed"} · {(signals.secondsSlumped ?? 0).toFixed(1)}s / {POSE_POLICY.slumpHold}s</p>}
 
           {/* Pose signal summary */}
-          {available && <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] font-mono">
+          {available && signals.visible && <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] font-mono">
             <SignalPill label="Posture" value={`${Math.round(signals.postureAngle)}°`} warn={signals.postureAngle > 35} danger={signals.postureAngle > 60} />
             <SignalPill label="Still" value={signals.secondsStill > 0 ? `${Math.round(signals.secondsStill)}s` : "Moving"} warn={signals.secondsStill > 60} danger={signals.secondsStill > 300} />
             <SignalPill label="Zone" value={signals.insideSafeZone ? "Safe" : "Outside"} danger={!signals.insideSafeZone} />

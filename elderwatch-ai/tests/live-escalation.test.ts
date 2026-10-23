@@ -14,11 +14,15 @@ import { monitoringState } from "../src/lib/platform/monitoring";
 import type { PoseFrame } from "../src/lib/poseEvidence";
 import { pose } from "./fixtures/poseFrames";
 
-test("live upper-body one-hand hold updates the top-left canvas and server to urgent at three seconds", async () => {
+test("live one-hand gesture stays urgent on canvas and server through jitter across rolling windows", async () => {
   delete process.env.MONGODB_URI;
   const resident = await saveResident({ ...MOCK_RESIDENTS[0], id: `gesture_${randomUUID()}` });
   const session = await startSession({ residentId: resident.id, source: "live_camera", deviceId: "test-camera", consent: true });
   const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const startedAt = Date.now();
+  let mediaTime = 0;
+  Date.now = () => startedAt + mediaTime * 1000;
   // tsx uses classic JSX for the app's preserve setting; Next supplies its own runtime.
   const jsxGlobal = globalThis as typeof globalThis & { React?: typeof React };
   const originalReact = jsxGlobal.React;
@@ -50,7 +54,7 @@ test("live upper-body one-hand hold updates the top-left canvas and server to ur
     const monitor = useResidentMonitor(resident, DEFAULT_SAFE_ZONE, { sessionId: session.id, isPaused: paused });
     sendFrame = frame => { setLandmarks(frame.landmarks); monitor.processFrame(frame.landmarks, { time: frame.time, aspect: 4 / 3 }); };
     return createElement(PoseCamera, { videoRef, canvasRef, landmarks, status: paused ? "idle" : "running", errorMessage: null,
-      safeZone: DEFAULT_SAFE_ZONE, severity: monitor.classification.severity, observationAvailable: monitor.signals.visible && !paused });
+      safeZone: DEFAULT_SAFE_ZONE, severity: monitor.classification.severity, observationAvailable: monitor.observationAvailable && !paused });
   }
   function draw() {
     labels.length = 0;
@@ -59,24 +63,35 @@ test("live upper-body one-hand hold updates the top-left canvas and server to ur
   }
   try {
     await act(async () => { renderer = create(createElement(Probe), { createNodeMock: element => element.type === "video" ? video : element.type === "canvas" ? canvas : null }); });
-    for (let i = 0; i <= 50; i++) {
+    for (let i = 0; i <= 180; i++) {
+      mediaTime = i * .2;
       const landmarks = pose("neck");
       for (const index of [16, 20]) landmarks[index].y = .7;
       for (const index of [23, 24]) landmarks[index].visibility = 0;
-      await act(async () => sendFrame({ time: i * .2, landmarks }));
-      assert.deepEqual(draw(), [i < 15 ? "● WATCHING" : "● URGENT"]);
-      if (i === 15) assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "URGENT");
+      if (i >= 20 && i < 180 && i % 10 === 0) for (const index of [15, 19]) landmarks[index].y = .7;
+      const brieflyMissing = i >= 20 && i % 10 === 5;
+      await act(async () => sendFrame({ time: mediaTime, landmarks: brieflyMissing ? null : landmarks }));
+      assert.deepEqual(draw(), [i < 15 ? "● WATCHING" : "● URGENT"], `media time ${mediaTime}`);
+      if (i >= 15 && i % 5 === 0) assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "URGENT");
     }
+    for (let i = 0; i <= 5; i++) {
+      mediaTime = 36.2 + i * .2;
+      await act(async () => sendFrame({ time: mediaTime, landmarks: pose() }));
+      assert.deepEqual(draw(), [i < 5 ? "● URGENT" : "● STABLE"]);
+    }
+    assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "NORMAL");
     assert.deepEqual(errors, []);
     await act(async () => renderer!.update(createElement(Probe, { paused: true })));
     assert.deepEqual(draw(), []);
     await act(async () => renderer!.update(createElement(Probe, { paused: false })));
     const landmarks = pose("neck");
-    await act(async () => sendFrame({ time: 11, landmarks }));
+    mediaTime = 38;
+    await act(async () => sendFrame({ time: mediaTime, landmarks }));
     assert.deepEqual(draw(), ["● WATCHING"], "Resuming must require a new hold, not retain prior urgent evidence");
   } finally {
     await act(async () => renderer?.unmount());
     globalThis.fetch = originalFetch;
+    Date.now = originalNow;
     if (originalReact) jsxGlobal.React = originalReact; else Reflect.deleteProperty(jsxGlobal, "React");
     globalThis.requestAnimationFrame = originalRaf;
     globalThis.cancelAnimationFrame = originalCancel;

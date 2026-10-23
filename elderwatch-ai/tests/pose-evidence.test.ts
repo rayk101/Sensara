@@ -113,8 +113,10 @@ test("actual MediaPipe samples: neck gesture watches before three-second escalat
   const { default: recorded } = await import("./fixtures/recorded-poses.json");
   const frames = recorded.choking as PoseFrame[];
   const results = frames.map((frame, i) => ({ time: frame.time, result: analyzePoseWindow(frames.slice(0, i + 1)) }));
-  assert.ok(results.filter(r => r.time < 8.8).every(r => r.result.severity !== "urgent"));
-  assert.equal(results.find(r => r.result.severity === "urgent")?.time.toFixed(1), "8.8");
+  assert.ok(results.filter(r => r.time < 7).every(r => r.result.severity !== "urgent"));
+  const firstUrgent = results.find(r => r.result.severity === "urgent");
+  assert.equal(firstUrgent?.time.toFixed(1), "7.0");
+  assert.ok(Math.abs(firstUrgent!.result.signals.handsNearThroatSeconds! - 3) < 1e-6);
 });
 
 test("one-hand neck gestures work with either hand, cropped hips and changes in framing", () => {
@@ -145,7 +147,8 @@ test("brief hand occlusion preserves prior evidence but missing time never advan
 });
 
 test("lowering a hand, alternating brief gestures, off-screen points and sampling gaps cannot accumulate urgent evidence", () => {
-  const lowered = frames("neck", 21); lowered[6] = { time: 1.2, landmarks: pose() };
+  const lowered = frames("neck", 21);
+  for (let i = 6; i <= 8; i++) lowered[i] = { time: i * .2, landmarks: pose() };
   assert.equal(analyzePoseWindow(lowered).severity, "watch");
   const alternating = frames("upright", 51);
   alternating.forEach((f, i) => { for (const j of (Math.floor(i / 5) % 2 ? [15, 19] : [16, 20])) { f.landmarks[j].x = .5; f.landmarks[j].y = .23; } });
@@ -156,6 +159,36 @@ test("lowering a hand, alternating brief gestures, off-screen points and samplin
     const hidden = frames("neck");
     hidden.forEach(f => { for (const j of [15, 19, 16, 20]) { f.landmarks[j].visibility = visibility; if (visibility === 1) f.landmarks[j].x = -1; } });
     assert.notEqual(analyzePoseWindow(hidden).severity, "urgent");
+  }
+});
+
+test("confirmed neck urgency survives boundary jitter and brief occlusion until a sustained visible release", () => {
+  for (const cropped of [false, true]) {
+    const f: PoseFrame[] = frames("neck", 31);
+    if (cropped) f.forEach(frame => { frame.landmarks![23].visibility = 0; frame.landmarks![24].visibility = 0; });
+    f[20].landmarks = pose(); // One noisy away frame after urgency has been established.
+    f[25].landmarks = null;
+    for (let i = 15; i < f.length; i++) {
+      const result = analyzePoseWindow(f.slice(0, i + 1), 4 / 3);
+      assert.equal(result.severity, "urgent", `frame ${i}, cropped=${cropped}`);
+      assert.equal(result.available, true);
+      if (i === 25) assert.equal(result.signals.visible, false, "Retained urgency must not invent visible landmarks");
+    }
+    const lowered = Array.from({ length: 6 }, (_, i) => ({ time: 6.2 + i * .2, landmarks: pose() }));
+    assert.equal(analyzePoseWindow([...f, ...lowered.slice(0, 5)]).severity, "urgent");
+    assert.equal(analyzePoseWindow([...f, ...lowered]).severity, "stable");
+    assert.equal(analyzePoseWindow([...f, ...lowered, { time: 7.4, landmarks: pose("neck") }]).severity, "watch");
+    const lost: PoseFrame[] = Array.from({ length: 4 }, (_, i) => ({ time: 6.2 + i * .2, landmarks: null }));
+    assert.equal(analyzePoseWindow([...f, ...lost]).available, false, "Tracking loss cannot retain a current observation indefinitely");
+  }
+});
+
+test("a long ongoing gesture with jitter stays urgent after the rolling evidence window advances", () => {
+  const f: PoseFrame[] = frames("neck", 181);
+  for (let i = 20; i < f.length; i += 9) f[i].landmarks = pose();
+  for (let i = 15; i < f.length; i++) {
+    const time = f[i].time;
+    assert.equal(analyzePoseWindow(f.slice(0, i + 1).filter(frame => time - frame.time <= 12)).severity, "urgent", `media time ${time}`);
   }
 });
 

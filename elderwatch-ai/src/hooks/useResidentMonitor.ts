@@ -22,6 +22,7 @@ interface MonitorOptions {
 }
 
 interface MonitorState {
+  observationAvailable: boolean;
   signals: SafetySignals;
   classification: SafetyClassification;
   timeline: SafetyEvent[];
@@ -40,6 +41,7 @@ export function useResidentMonitor(
   const lastObservation = useRef({ at: 0, severity: "", sessionId: "" });
   const pending = useRef(false);
   const [state, setState] = useState<MonitorState>(() => ({
+    observationAvailable: false,
     signals: {
       isLyingDown: false,
       movementScore: 1,
@@ -69,14 +71,14 @@ export function useResidentMonitor(
     lastObservation.current = { at: 0, severity: "", sessionId: "" };
     setLatestEvent(null);
     setPersistenceError(null);
-    setState(prev => ({ ...prev, timeline: [], classification: {
+    setState(prev => ({ ...prev, observationAvailable: false, timeline: [], classification: {
       severity: "stable", eventType: "normal", reason: "Waiting for camera…", confidence: 0,
     } }));
   }, [resident?.id, resetTimers]);
 
   useEffect(() => {
     resetTimers();
-    setState(prev => ({ ...prev,
+    setState(prev => ({ ...prev, observationAvailable: false,
       signals: { ...prev.signals, visible: false, secondsStill: 0 },
       classification: {
         severity: "stable", eventType: "normal", confidence: 0,
@@ -116,7 +118,7 @@ export function useResidentMonitor(
     if (time <= (frames.current.at(-1)?.time ?? -1)) frames.current = [];
     frames.current = [...frames.current.filter(f => time - f.time <= POSE_POLICY.windowSeconds), { time, landmarks }].slice(-80);
     const measured = analyzePoseWindow(frames.current, aspect, safeZone);
-    setState(prev => ({ ...prev, signals: measured.signals, classification: measured }));
+    setState(prev => ({ ...prev, observationAvailable: measured.available, signals: measured.signals, classification: measured }));
     const observed = measured.available ? measured.severity : "unknown";
     if (sessionId && !pending.current && (now - lastObservation.current.at >= 1000 || observed !== lastObservation.current.severity || sessionId !== lastObservation.current.sessionId)) {
       pending.current = true;
