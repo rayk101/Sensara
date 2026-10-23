@@ -76,7 +76,7 @@ export default function AnalyticsCard({ mongoConnected, refreshTrigger }: Analyt
             color="text-sensara-forest-700"
           />
           <StatTile
-            label="Urgent"
+            label="Critical"
             value={analytics.urgentEventsLast24h}
             color="text-red-600"
             highlight={analytics.urgentEventsLast24h > 0}

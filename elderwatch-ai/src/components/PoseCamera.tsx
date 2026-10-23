@@ -299,7 +299,7 @@ export default function PoseCamera({
 
       // 5. Show a severity chip only when there is a current observation.
       if (observationAvailable && status === "running") {
-        const chipLabel = severity === "watch" ? "WATCHING" : severity.toUpperCase();
+        const chipLabel = severity === "watch" ? "WATCHING" : severity === "urgent" ? "CRITICAL" : severity.toUpperCase();
         ctx.fillStyle = "rgba(0,0,0,0.65)";
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(8, 8, 110, 28, 6);

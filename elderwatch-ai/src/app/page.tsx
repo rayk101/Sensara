@@ -341,7 +341,7 @@ export default function Dashboard() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sensara-border bg-white p-4">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold" role="status">{mainTab === "multi-feed" ? (demo.anyRunning ? `${demo.runningFeedIds.length} of ${demoFeedIds.length} feeds running` : "Demo paused — play a feed below or start all four") : (isPaused ? "Camera monitoring paused" : "Monitoring enabled")}</p>
-            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">{mainTab === "live-camera" ? "Opening Live Camera starts" : "Starting authorizes"} {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, 15-second incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Audio playback has its own control on the right.</p>
+            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">{mainTab === "live-camera" ? "Opening Live Camera starts" : "Starting authorizes"} {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, {mainTab === "live-camera" ? "15-second" : "7-second"} critical incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Audio playback has its own control on the right.</p>
           </div>
           {mainTab === "multi-feed" && demo.anyRunning && !demo.allRunning && <button onClick={demo.pauseAll} className="rounded-lg border border-sensara-border px-4 py-2 text-sm font-semibold hover:bg-sensara-warm-100">Pause all</button>}
           <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{controlLabel}</button>
@@ -445,7 +445,7 @@ export default function Dashboard() {
                 <div className="bg-white border border-sensara-border rounded-lg px-3 py-2 shadow-sm">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] text-sensara-warm-600 font-medium uppercase tracking-wider">Observed hand gesture</span>
-                    <span className="text-[10px] text-sensara-warm-400">Either hand held near neck: {POSE_POLICY.gestureHold}s to urgent</span>
+                    <span className="text-[10px] text-sensara-warm-400">Either hand held near neck: {POSE_POLICY.gestureHold}s to critical</span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
                     <DebugPill
@@ -811,7 +811,7 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
           <p className="text-gray-500">events</p>
         </div>
         <div className="bg-red-50 rounded-lg p-2 border border-red-200">
-          <p className="text-gray-500">Urgent (all time)</p>
+          <p className="text-gray-500">Critical (all time)</p>
           <p className="text-red-700 font-bold text-lg">{history.urgentEvents}</p>
         </div>
         <div className="bg-orange-50 rounded-lg p-2 border border-orange-200">
@@ -845,7 +845,7 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
               >
                 <span className="text-blue-400 shrink-0">📹</span>
                 <div className="flex-1 min-w-0">
-                  <span className="text-blue-200">{EVENT_LABELS[clip.eventType] ?? clip.eventType}</span>
+                  <span className="text-blue-200 break-all">{clip.fileName ?? clip.s3Key.split("/").at(-1) ?? EVENT_LABELS[clip.eventType]}</span>
                   <span className="text-gray-600 ml-1.5">
                     {new Date(clip.createdAt).toLocaleDateString([], {
                       month: "short",

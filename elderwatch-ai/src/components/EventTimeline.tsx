@@ -231,12 +231,12 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
                       onClick={() =>
                         setViewingClip({
                           clipId: event.videoClipId!,
-                          label: EVENT_LABELS[event.eventType] ?? event.eventType,
+                          label: event.videoClip?.fileName ?? EVENT_LABELS[event.eventType] ?? event.eventType,
                         })
                       }
                       className="w-full text-xs bg-sensara-forest-700 hover:bg-sensara-forest-600 text-white border border-sensara-forest-500 rounded-lg py-1.5 transition-colors"
                     >
-                      📹 View Clip
+                      📹 View Clip{event.videoClip?.fileName ? ` · ${event.videoClip.fileName}` : ""}
                     </button>
                   )}
 

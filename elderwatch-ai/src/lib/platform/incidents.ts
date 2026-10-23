@@ -109,7 +109,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const merge = (prior: SafetyEvent): Partial<SafetyEvent> => {
     if (prior.firstUrgentAt || !urgent) return {};
     return { severity: "urgent", eventType: event.eventType, confidence: event.confidence, reason: event.reason,
-      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, firstUrgentAt: now, workflow: event.workflow, notificationsQueued: false };
+      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, source: event.source, sessionId: event.sessionId, firstUrgentAt: now, workflow: event.workflow, notificationsQueued: false };
   };
   if (!isMongoEnabled()) {
     const ingestion = memory("event_ingestions").get(idempotencyKey);

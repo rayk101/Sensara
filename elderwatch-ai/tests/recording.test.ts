@@ -133,3 +133,35 @@ test("pausing cancels recording without taking microphone ownership or uploading
     env.restore();
   }
 });
+
+for (const [source, seconds] of [["live_camera", 15], ["multi_feed_demo", 7]] as const) {
+  test(`${source}: a Watching incident promoted to Critical records ${seconds}s exactly once`, async t => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+    const env = setup(true);
+    let renderer: ReactTestRenderer | undefined;
+    const original = { ...event(), source, severity: "watch" as const };
+    function Probe({ current }: { current: SafetyEvent }) {
+      useVideoRecorder(env.stream, current, null, false, () => {});
+      return null;
+    }
+    try {
+      await act(async () => { renderer = create(createElement(Probe, { current: original })); });
+      assert.equal(env.recorders.length, 0);
+      const critical = { ...original, severity: "urgent" as const, firstUrgentAt: new Date().toISOString() };
+      await act(async () => renderer!.update(createElement(Probe, { current: critical })));
+      assert.equal(env.recorders.length, 1, "Escalation must trigger capture even though the ID is unchanged");
+      await act(async () => { t.mock.timers.tick(seconds * 1000 - 1); });
+      assert.equal(env.recorders[0].state, "recording");
+      await act(async () => { t.mock.timers.tick(1); });
+      assert.equal(env.recorders[0].state, "inactive");
+      const saved = env.requests.find(request => request.url === "/api/video-clips")?.body;
+      assert.equal(saved?.eventId, original._id);
+      assert.equal((Date.parse(String(saved?.clipEndTime)) - Date.parse(String(saved?.clipStartTime))) / 1000, seconds);
+      await act(async () => renderer!.update(createElement(Probe, { current: { ...critical } })));
+      assert.equal(env.recorders.length, 1, "Repeated urgent samples must not duplicate a clip");
+    } finally {
+      await act(async () => renderer?.unmount());
+      env.restore();
+    }
+  });
+}

@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
+import { clipPolicy } from "@/lib/clipPolicy";
 export type RecordingStatus = "idle" | "capturing" | "uploading" | "saved" | "error" | "s3-disabled";
-const CLIP_DURATION_MS = 15_000;
 // The browser owns capture. Up to three independent urgent incidents may share
 // a camera stream; each retains its own immutable patient/incident snapshot.
 export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent | null, micStream: MediaStream | null, isPaused: boolean, onSaved: (event: SafetyEvent) => void) {
@@ -17,10 +17,13 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
     return () => { for (const cancel of active.values()) cancel(); active.clear(); setStatus("idle"); setStatusMessage(null); };
   }, [stream, isPaused]);
   const eventId = event?._id;
+  const severity = event?.severity;
+  const videoStatus = event?.workflow?.video.status;
   useEffect(() => {
     const captured = current.current.event;
     if (!stream || isPaused || !captured || !eventId || captured.severity !== "urgent" || (captured.workflow && captured.workflow.video.status === "not_requested") || captured.hasVideoClip || handled.current.has(eventId)) return;
     handled.current.add(eventId);
+    const policy = clipPolicy(captured.source);
     const report = (status: string, error?: string) => fetch(`/api/events/${eventId}/capture`, { method: "PATCH", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, error }) }).catch(() => {});
     if (Date.now() - Date.parse(captured.firstUrgentAt ?? captured.createdAt) > 30_000 || jobs.current.size >= 3) {
       void report("unavailable", "Camera capture was unavailable when this incident occurred"); return;
@@ -61,8 +64,8 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
           void upload(blob, startedAt, endedAt, audioTracks.length > 0);
         };
         recorder.start(1000);
-        void report("recording"); setStatus("capturing"); setStatusMessage("Recording 15-second post-event footage…");
-        timer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, CLIP_DURATION_MS);
+        void report("recording"); setStatus("capturing"); setStatusMessage(`Recording ${policy.seconds}-second critical event clip…`);
+        timer = setTimeout(() => { if (recorder?.state === "recording") recorder.stop(); }, policy.seconds * 1000);
       } catch (e) {
         if (!cancelled) { setStatus("error"); setStatusMessage(e instanceof Error ? e.message : "Capture failed"); void report("failed", "Capture could not start"); }
         finish();
@@ -72,7 +75,7 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
       try {
         if (!blob.size) throw new Error("Recorded video was empty");
         const durationSeconds = (Date.parse(clipEndTime) - Date.parse(clipStartTime)) / 1000;
-        if (durationSeconds < 14 || durationSeconds > 20) { await report("partial", "Capture interval was incomplete"); throw new Error("Partial recording; no complete 15-second clip was uploaded"); }
+        if (durationSeconds < policy.minSeconds || durationSeconds > policy.maxSeconds) { await report("partial", "Capture interval was incomplete"); throw new Error(`Partial recording; no complete ${policy.seconds}-second clip was uploaded`); }
         await report("captured");
         setStatus("uploading"); setStatusMessage("Uploading post-event clip…");
         const presign = await request("/api/video-clips/presign-upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventId, residentId: captured.residentId, contentType: blob.type, fileSize: blob.size }) });
@@ -91,12 +94,12 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
         }
         if (!result?.ok) throw new Error("Uploaded video could not be verified or linked");
         const saved = await result.json(); if (saved.event) current.current.onSaved(saved.event);
-        setStatus("saved"); setStatusMessage("15-second post-event clip saved");
+        setStatus("saved"); setStatusMessage(`${policy.seconds}-second critical event clip saved${saved.fileName ? `: ${saved.fileName}` : ""}`);
       } catch (e) {
         if (!cancelled) { setStatus("error"); setStatusMessage(e instanceof Error ? e.message : "Upload failed"); void report("failed", "Video capture or upload failed; incident and other alerts remain active"); }
       } finally { finish(); }
     };
     void run();
-  }, [stream, eventId, isPaused]);
+  }, [stream, eventId, severity, videoStatus, isPaused]);
   return { recordingStatus, statusMessage };
 }

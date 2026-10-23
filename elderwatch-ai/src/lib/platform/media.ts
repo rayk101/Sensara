@@ -7,8 +7,9 @@ import ffmpeg from "ffmpeg-static";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client, getS3Bucket } from "../s3";
 import { ApiError } from "./auth";
+import { clipPolicy } from "../clipPolicy";
 const run = promisify(execFile);
-export async function verifyUploadedMedia(key: string): Promise<number> {
+export async function verifyUploadedMedia(key: string, policy = clipPolicy("live_camera")): Promise<number> {
   const directory = await mkdtemp(join(tmpdir(), "sensara-clip-"));
   try {
     const object = await getS3Client().send(new GetObjectCommand({ Bucket: getS3Bucket(), Key: key }));
@@ -19,8 +20,8 @@ export async function verifyUploadedMedia(key: string): Promise<number> {
     const { stdout } = await run(process.env.FFMPEG_PATH || ffmpeg || "ffmpeg", ["-nostdin", "-v", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-i", file, "-map", "0:v:0", "-progress", "pipe:1", "-f", "null", "-"], { timeout: 45000, maxBuffer: 1000000 });
     const times = [...stdout.matchAll(/out_time_us=(\d+)/g)];
     const duration = Number(times.at(-1)?.[1]) / 1_000_000;
-    if (!Number.isFinite(duration) || duration < 14 || duration > 20) throw new Error("Incomplete video");
+    if (!Number.isFinite(duration) || duration < policy.minSeconds || duration > policy.maxSeconds) throw new Error("Incomplete video");
     return duration;
-  } catch { throw new ApiError(422, "Video could not be decoded as a complete 15-second clip"); }
+  } catch { throw new ApiError(422, `Video could not be decoded as a complete ${policy.seconds}-second clip`); }
   finally { await rm(directory, { recursive: true, force: true }); }
 }

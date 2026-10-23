@@ -125,6 +125,7 @@ export interface SafetyEvent {
 // ─── Inline video clip metadata embedded in a safety event ───────────────────
 export interface VideoClipMeta {
   s3Key: string;
+  fileName?: string;
   bucket: string;
   contentType: string;
   clipStartTime: string;
@@ -135,6 +136,7 @@ export interface VideoClipMeta {
 // ─── A video clip document stored in the video_clips collection ───────────────
 export interface VideoClip {
   _id?: string;
+  fileName?: string;
   eventId?: string | null;
   fileSize?: number;
   uploadStatus?: "pending" | "uploaded" | "failed";

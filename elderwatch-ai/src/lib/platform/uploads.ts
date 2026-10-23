@@ -1,4 +1,5 @@
 import { verifyUploadedMedia } from "./media";
+import { clipPolicy, clipFileName } from "../clipPolicy";
 import { getResidentById } from "../db/residents";
 import { randomUUID } from "node:crypto";
 import { getSafetyEvent, linkVideoClipToEvent } from "../db/events";
@@ -27,7 +28,7 @@ export async function prepareUpload(input: Record<string, unknown>) {
   if (event.hasVideoClip) throw new ApiError(409, "Incident already has a clip");
   const id = randomUUID();
   const intent: UploadIntent = { id, eventId, residentId: event.residentId, ...file,
-    s3Key: `critical-events/incidents/${event.residentId}/${eventId}/${id}.${file.extension}`, bucket: getS3Bucket(),
+    s3Key: `critical-events/incidents/${event.residentId}/${eventId}/${clipFileName(event, file.extension as "mp4" | "webm")}`, bucket: getS3Bucket(),
     status: "pending", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600_000).toISOString() };
   let saved: UploadIntent;
   if (!isMongoEnabled()) {
@@ -55,19 +56,21 @@ export async function completeUpload(input: Record<string, unknown>, inspect = i
   if (Date.parse(intent.expiresAt) < Date.now()) throw new ApiError(409, "Upload verification expired");
   const start = isoTime(input.clipStartTime), end = isoTime(input.clipEndTime);
   const duration = (Date.parse(end) - Date.parse(start)) / 1000;
-  if (duration < 14 || duration > 20 || Date.parse(start) < Date.parse(event.createdAt) - 1000 || Date.parse(end) > Date.now() + 10_000) throw new ApiError(400, "Expected approximately 15 seconds of post-event footage");
+  const policy = clipPolicy(event.source);
+  if (duration < policy.minSeconds || duration > policy.maxSeconds || Date.parse(start) < Date.parse(event.firstUrgentAt ?? event.createdAt) - 1000 || Date.parse(end) > Date.now() + 10_000) throw new ApiError(400, `Expected approximately ${policy.seconds} seconds of post-event footage`);
   const object = await inspect(intent.s3Key);
   const bytes = object.bytes;
   const validContainer = intent.contentType.startsWith("video/webm") ? bytes?.[0] === 0x1a && bytes?.[1] === 0x45 && bytes?.[2] === 0xdf && bytes?.[3] === 0xa3 : bytes && Buffer.from(bytes.slice(4, 8)).toString() === "ftyp";
   if (object.size !== intent.fileSize || object.type !== intent.contentType || !validContainer) throw new ApiError(400, "Uploaded object does not match the approved video");
-  const mediaDuration = await verify(intent.s3Key);
+  const mediaDuration = await verify(intent.s3Key, policy);
+  if (!Number.isFinite(mediaDuration) || mediaDuration < policy.minSeconds || mediaDuration > policy.maxSeconds) throw new ApiError(422, `Expected a complete ${policy.seconds}-second clip`);
   const settings = await getSettings();
   const clip = await createVideoClip({ eventId: intent.eventId, residentId: event.residentId, residentName: event.residentName, room: event.room,
-    severity: event.severity, eventType: event.eventType, s3Key: intent.s3Key, bucket: intent.bucket, contentType: intent.contentType,
+    severity: event.severity, eventType: event.eventType, s3Key: intent.s3Key, fileName: intent.s3Key.split("/").at(-1), bucket: intent.bucket, contentType: intent.contentType,
     fileSize: intent.fileSize, uploadStatus: "uploaded", uploadedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + settings.retentionDays * 86400_000).toISOString(),
     footageType: "post-event", durationSeconds: mediaDuration, clipStartTime: start, clipEndTime: end,
     hasVideoTrack: true, hasAudioTrack: input.hasAudioTrack === true, createdAt: new Date().toISOString() });
-  const updated = await linkVideoClipToEvent(intent.eventId, clip._id!, { s3Key: clip.s3Key, bucket: clip.bucket, contentType: clip.contentType, durationSeconds: mediaDuration, clipStartTime: start, clipEndTime: end });
+  const updated = await linkVideoClipToEvent(intent.eventId, clip._id!, { s3Key: clip.s3Key, fileName: clip.fileName, bucket: clip.bucket, contentType: clip.contentType, durationSeconds: mediaDuration, clipStartTime: start, clipEndTime: end });
   const update = { status: "uploaded", clipId: clip._id };
   if (!isMongoEnabled()) Object.assign(intent, update);
   else await (await getDb()).collection("upload_intents").updateOne({ id }, { $set: update });

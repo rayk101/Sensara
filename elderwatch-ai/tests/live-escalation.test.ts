@@ -72,14 +72,14 @@ test("live one-hand gesture reaches and retains urgent through repeated 600ms dr
       for (const index of [23, 24]) landmarks[index].visibility = 0;
       const brieflyMissing = [6, 7, 8].includes(i % 10);
       await act(async () => sendFrame({ time: mediaTime, landmarks: brieflyMissing ? null : landmarks }));
-      assert.deepEqual(draw(), i < 23 && brieflyMissing ? [] : [i < 23 ? "● WATCHING" : "● URGENT"], `media time ${mediaTime}`);
+      assert.deepEqual(draw(), i < 23 && brieflyMissing ? [] : [i < 23 ? "● WATCHING" : "● CRITICAL"], `media time ${mediaTime}`);
       if (i >= 23 && i % 5 === 0) assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "URGENT");
       if (i === 8) assert.equal((diagnostics as PoseDiagnostics | null)?.left.seconds, 1);
     }
     for (let i = 0; i <= 5; i++) {
       mediaTime = 36.2 + i * .2;
       await act(async () => sendFrame({ time: mediaTime, landmarks: pose() }));
-      assert.deepEqual(draw(), [i < 5 ? "● URGENT" : "● STABLE"]);
+      assert.deepEqual(draw(), [i < 5 ? "● CRITICAL" : "● STABLE"]);
     }
     assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "NORMAL");
     assert.deepEqual(errors, []);

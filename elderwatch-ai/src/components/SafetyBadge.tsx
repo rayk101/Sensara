@@ -31,7 +31,7 @@ const CONFIGS: Record<ResidentStatusValue, { label: string; bg: string; text: st
     dot: "bg-orange-400",
   },
   urgent: {
-    label: "URGENT",
+    label: "CRITICAL",
     bg: "bg-red-950/60",
     text: "text-red-300",
     border: "border-red-600",

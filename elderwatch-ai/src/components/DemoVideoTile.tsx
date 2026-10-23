@@ -154,7 +154,7 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
         )}
       </div>
 
-      {activeUrgent && <p className="border-y border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">Patient priority: URGENT · Unresolved saved incident. Review on the right; this is separate from the current video observation.</p>}
+      {activeUrgent && <p className="border-y border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800">Patient priority: CRITICAL · Unresolved saved incident. Review on the right; this is separate from the current video observation.</p>}
 
       {/* Video */}
       <div className="relative bg-gray-900" style={{ aspectRatio: "16/9" }}>
@@ -197,7 +197,7 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
         {currentStatus.severity === "urgent" && !videoError && (
           <div className="absolute top-2 left-2 right-2 bg-red-950/85 border border-red-700/70 rounded-lg px-2.5 py-1.5">
             <p className="text-red-300 text-[10px] font-bold">
-              ⚠ {EVENT_LABELS[currentStatus.eventType] ?? "URGENT"}
+              ⚠ CRITICAL · {EVENT_LABELS[currentStatus.eventType] ?? "Movement alert"}
             </p>
             <p className="text-red-200/75 text-[9px] mt-0.5 line-clamp-2">{currentStatus.reason}</p>
           </div>
