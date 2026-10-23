@@ -88,9 +88,16 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
         let result: Response | null = null;
         // Retry only metadata completion; never re-record or overwrite the S3 object.
         for (let attempt = 0; attempt < 3; attempt++) {
-          result = await request("/api/video-clips", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(metadata) });
-          if (result.ok || result.status < 500) break;
-          await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+          if (cancelled) return;
+          try {
+            result = await request("/api/video-clips", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(metadata) });
+            if (result.ok || result.status < 500) break;
+          } catch (error) {
+            // A lost response may follow a successful server commit. Completion
+            // is idempotent, so retry it rather than leave the clip unconfirmed.
+            if (cancelled || attempt === 2) throw error;
+          }
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
         }
         if (!result?.ok) throw new Error("Uploaded video could not be verified or linked");
         const saved = await result.json(); if (saved.event) current.current.onSaved(saved.event);

@@ -203,17 +203,20 @@ export async function linkVideoClipToEvent(
   clipId: string,
   videoClip: VideoClipMeta
 ): Promise<SafetyEvent | null> {
-  if (!await getSafetyEvent(id)) return null;
+  const existing = await getSafetyEvent(id);
+  if (!existing) return null;
   const update = { hasVideoClip: true, videoClipId: clipId, videoClip };
+  const videoState = { status: "available", updatedAt: new Date().toISOString() };
   if (!isMongoEnabled()) {
     const event = getInMemoryStore().getEventById(id);
     if (!event) return null;
     Object.assign(event, update);
+    if (event.workflow) event.workflow.video = videoState;
     return event;
   }
   const db = await getDb();
   const filter = { _id: ObjectId.isValid(id) ? new ObjectId(id) : id };
   return db.collection(COLLECTION).findOneAndUpdate(
-    filter as object, { $set: update }, { returnDocument: "after" }
+    filter as object, { $set: { ...update, ...(existing.workflow ? { "workflow.video": videoState } : {}) } }, { returnDocument: "after" }
   ) as unknown as Promise<SafetyEvent | null>;
 }

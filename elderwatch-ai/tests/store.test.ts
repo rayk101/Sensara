@@ -7,7 +7,11 @@ import { createCaregiverNote, getNotesForEvent } from "../src/lib/db/notes";
 test("a saved event keeps its identity across acknowledgement, notes, and clip linking", async () => {
   delete process.env.MONGODB_URI;
   const { _id, ...sample } = generateMockEvents()[0];
-  const event = await createSafetyEvent({ ...sample, residentId: "regression-test", createdAt: new Date().toISOString(), acknowledged: false });
+  const createdAt = new Date().toISOString();
+  const event = await createSafetyEvent({ ...sample, residentId: "regression-test", createdAt, acknowledged: false, workflow: {
+    video: { status: "uploading", updatedAt: createdAt }, voice: { status: "not_requested", updatedAt: createdAt },
+    messaging: { status: "disabled", recipientIds: [], updatedAt: createdAt }, dashboard: { status: "available", updatedAt: createdAt },
+  } });
   assert.ok(event._id && event._id !== _id);
   assert.equal((await getEventsByResident("regression-test"))[0]._id, event._id);
   assert.equal((await acknowledgeEvent(event._id!, "Test Caregiver"))?.acknowledged, true);
@@ -19,6 +23,7 @@ test("a saved event keeps its identity across acknowledgement, notes, and clip l
   });
   assert.equal(linked?.videoClipId, "test-clip");
   assert.equal(linked?.hasVideoClip, true);
+  assert.equal(linked?.workflow?.video.status, "available", "Link and ready status must be returned together, including after a completion retry");
   assert.equal(await linkVideoClipToEvent("missing", "clip", linked!.videoClip!), null);
   assert.strictEqual(getInMemoryStore(), getInMemoryStore());
 });

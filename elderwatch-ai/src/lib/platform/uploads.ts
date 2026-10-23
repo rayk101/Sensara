@@ -74,7 +74,5 @@ export async function completeUpload(input: Record<string, unknown>, inspect = i
   const update = { status: "uploaded", clipId: clip._id };
   if (!isMongoEnabled()) Object.assign(intent, update);
   else await (await getDb()).collection("upload_intents").updateOne({ id }, { $set: update });
-  if (isMongoEnabled()) await (await getDb()).collection("safety_events").updateOne({ idempotencyKey: event.idempotencyKey }, { $set: { "workflow.video": { status: "available", updatedAt: new Date().toISOString() } } });
-  else if (updated?.workflow) updated.workflow.video = { status: "available", updatedAt: new Date().toISOString() };
   return { ...clip, event: updated };
 }

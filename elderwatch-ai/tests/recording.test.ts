@@ -6,7 +6,7 @@ import { useVideoRecorder } from "../src/hooks/useVideoRecorder";
 import { generateMockEvents } from "../src/lib/mockData";
 import type { SafetyEvent } from "../src/lib/types";
 
-function setup(configured: boolean) {
+function setup(configured: boolean, completionDrops = 0) {
   const originalFetch = globalThis.fetch;
   const originals = ["MediaStream", "MediaRecorder", "navigator"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   const requests: Array<{ url: string; body?: Record<string, unknown> }> = [];
@@ -44,8 +44,11 @@ function setup(configured: boolean) {
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     requests.push({ url, body });
     if (url.endsWith("presign-upload") && init?.method !== "POST") return Response.json({ s3Configured: configured });
-    if (url.endsWith("presign-upload")) return Response.json({ uploadUrl: "https://example.invalid/upload", s3Key: "test.webm", bucket: "demo" });
-    if (url.endsWith("/video-clips")) return Response.json({ _id: "clip", event: { ...body, _id: body.eventId, hasVideoClip: true } });
+    if (url.endsWith("presign-upload")) return Response.json({ uploadUrl: "https://example.invalid/upload", uploadId: "test-upload", headers: { "Content-Type": "video/webm", "If-None-Match": "*" }, s3Key: "test.webm", bucket: "demo" });
+    if (url.endsWith("/video-clips")) {
+      if (completionDrops-- > 0) throw new TypeError("Network response lost");
+      return Response.json({ _id: "clip", event: { ...body, _id: body.eventId, hasVideoClip: true } });
+    }
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   return {
@@ -63,6 +66,32 @@ function setup(configured: boolean) {
 }
 
 const event = (): SafetyEvent => ({ ...generateMockEvents()[0], _id: "recording-event", createdAt: new Date().toISOString(), acknowledged: false });
+
+test("a lost completion response retries linking without recording or uploading twice", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const env = setup(true, 1);
+  let renderer: ReactTestRenderer | undefined, status = "", saves = 0;
+  function Probe() {
+    status = useVideoRecorder(env.stream, event(), null, false, () => { saves++; }).recordingStatus;
+    return null;
+  }
+  try {
+    await act(async () => { renderer = create(createElement(Probe)); });
+    await act(async () => { t.mock.timers.tick(15_000); });
+    assert.equal(status, "uploading");
+    await act(async () => { t.mock.timers.tick(500); });
+    assert.equal(status, "saved");
+    assert.equal(saves, 1);
+    assert.equal(env.recorders.length, 1);
+    assert.equal(env.requests.filter(r => r.url === "https://example.invalid/upload").length, 1);
+    const completions = env.requests.filter(r => r.url === "/api/video-clips");
+    assert.equal(completions.length, 2);
+    assert.deepEqual(completions[0].body, completions[1].body);
+  } finally {
+    await act(async () => renderer?.unmount());
+    env.restore();
+  }
+});
 
 test("disabled clip storage never requests the microphone or starts a recording", async () => {
   const env = setup(false);
