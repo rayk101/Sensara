@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import ffmpeg from "ffmpeg-static";
-import { createElement } from "react";
+import React, { createElement } from "react";
+import RecordingNotice from "../src/components/RecordingNotice";
+import { createSafetyEvent, getSafetyEvent, linkVideoClipToEvent } from "../src/lib/db/events";
+import { generateMockEvents } from "../src/lib/mockData";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { useVideoRecorder } from "../src/hooks/useVideoRecorder";
@@ -28,7 +31,9 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const directory = mkdtempSync(join(tmpdir(), "sensara-flow-test-"));
   const originalFetch = globalThis.fetch;
-  const originals = ["MediaRecorder", "MediaStream"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  const originals = ["MediaRecorder", "MediaStream", "React"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperty(globalThis, "React", { configurable: true, value: React });
+  const notices: string[] = [];
   const objects = new Map<string, { bytes: Uint8Array; type: string }>();
   const failures: string[] = [];
   let uploads = 0, fixture: Uint8Array, mimeType = "video/webm", renderer: ReactTestRenderer | undefined;
@@ -96,7 +101,8 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
   }) as typeof fetch;
   function Probe({ event }: { event: SafetyEvent }) {
     recording = useVideoRecorder(stream, event, null, false, saved => { savedEvent = saved; });
-    return null;
+    if (recording.statusMessage) notices.push(recording.statusMessage);
+    return createElement(RecordingNotice, { status: recording.recordingStatus, message: recording.statusMessage });
   }
   const request = (path: string, body: object) => new Request(`http://localhost${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   try {
@@ -108,6 +114,14 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       execFileSync(ffmpeg!, ["-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=160x120:r=10", "-t", String(seconds), "-an", "-c:v", codec, "-pix_fmt", "yuv420p", file]);
       fixture = Uint8Array.from(readFileSync(file)); mimeType = `video/${extension}`; savedEvent = null;
       loseCompletionResponse = source === "live_camera";
+      let previous: SafetyEvent | undefined;
+      if (source === "live_camera") {
+        const oldTime = new Date(Date.now() - 86400_000).toISOString();
+        previous = await createSafetyEvent({ ...generateMockEvents()[0], residentId, source, sessionId: "yesterday",
+          eventType: "possible_fall", severity: "urgent", status: "open", firstUrgentAt: oldTime, createdAt: oldTime,
+          activeEpisodeKey: `${residentId}:fall` });
+        await linkVideoClipToEvent(previous._id!, "previous-clip", { s3Key: "previous.mp4", bucket: "test-clips", contentType: "video/mp4", durationSeconds: 15, clipStartTime: oldTime, clipEndTime: oldTime });
+      }
       const sessionResponse = await startSession(request("/api/monitoring-sessions", { residentId, source, deviceId: "feed1", consent: true }));
       assert.equal(sessionResponse.status, 201);
       const session = await sessionResponse.json();
@@ -120,15 +134,20 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
         return (await response.json()).event as SafetyEvent;
       };
       const watching = await detection(17);
-      assert.equal(watching.severity, "watch");
+      assert.equal(watching.severity, previous ? "urgent" : "watch");
       const before = recorders.length;
       await act(async () => { renderer = create(createElement(Probe, { event: watching })); });
       assert.equal(recorders.length, before);
       const critical = await detection(31);
       assert.equal(critical.severity, "urgent");
-      assert.equal(critical._id, watching._id);
+      if (previous) {
+        assert.notEqual(critical._id, previous._id, "A previous open incident with a clip cannot suppress fresh capture");
+        assert.equal(critical.recurrenceOf, previous._id);
+      } else assert.equal(critical._id, watching._id);
       await act(async () => renderer!.update(createElement(Probe, { event: critical })));
       assert.equal(recording.recordingStatus, "capturing");
+      assert.ok(JSON.stringify(renderer!.toJSON()).includes(`recording ${seconds} seconds`));
+      assert.equal(renderer!.root.findByProps({ role: "status" }).props["aria-live"], "polite");
       assert.equal(recorders.length, before + 1);
       t.mock.timers.tick(seconds * 1000);
       await act(async () => {
@@ -137,6 +156,13 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       });
       assert.deepEqual(failures, []);
       assert.equal(recording.recordingStatus, "saved", recording.statusMessage ?? "");
+      assert.ok(notices.includes("Saving clip to S3…"));
+      assert.ok(JSON.stringify(renderer!.toJSON()).includes("Clip saved to S3:"));
+      if (previous) {
+        const preserved = await getSafetyEvent(previous._id!);
+        assert.equal(preserved?.status, "open");
+        assert.equal(preserved?.videoClipId, "previous-clip");
+      }
       const saved = savedEvent as SafetyEvent | null;
       assert.ok(saved?.hasVideoClip);
       assert.equal(saved.workflow?.video.status, "available", "The returned incident must already show a playable clip");

@@ -13,6 +13,7 @@ import Administration from "@/components/Administration";
 import IncidentCenter from "@/components/IncidentCenter";
 import SignIn from "@/components/SignIn";
 import { useVideoRecorder } from "@/hooks/useVideoRecorder";
+import RecordingNotice from "@/components/RecordingNotice";
 import ResidentCard from "@/components/ResidentCard";
 import EventTimeline from "@/components/EventTimeline";
 import AnalyticsCard from "@/components/AnalyticsCard";
@@ -322,19 +323,8 @@ export default function Dashboard() {
       </header>
 
       {/* ── Toasts (always on top, fixed position) ────────────────────────── */}
-      {recordingMessage && (
-        <div className={`fixed top-20 right-4 z-50 rounded-xl px-4 py-2 text-sm shadow-xl border animate-fade-in flex items-center gap-2
-          ${recordingStatus === "capturing" ? "bg-red-900 text-red-200 border-red-700" :
-            recordingStatus === "uploading" ? "bg-blue-900 text-blue-200 border-blue-700" :
-            recordingStatus === "saved" ? "bg-green-900 text-green-200 border-green-700" :
-            recordingStatus === "s3-disabled" ? "bg-yellow-900/80 text-yellow-200 border-yellow-700" :
-            "bg-red-900 text-red-200 border-red-700"}`}
-        >
-          {recordingStatus === "capturing" && <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />}
-          {recordingStatus === "uploading" && <span className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-300 rounded-full animate-spin" />}
-          {recordingMessage}
-        </div>
-      )}
+      <RecordingNotice status={persistenceError && classification.severity === "urgent" ? "error" : recordingStatus}
+        message={persistenceError && classification.severity === "urgent" ? persistenceError : recordingMessage} />
 
       {/* ── Tab content ───────────────────────────────────────────────────── */}
       <main className="flex-1 max-w-[1400px] mx-auto w-full px-4 py-5">

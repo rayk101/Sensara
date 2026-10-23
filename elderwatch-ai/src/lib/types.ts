@@ -92,6 +92,8 @@ export interface SafetyEvent {
   correlationId?: string;
   detectedAt?: string;
   firstUrgentAt?: string | null;
+  lastUrgentAt?: string | null;
+  recurrenceOf?: string;
   workflow?: {
     video: { status: string; error?: string; updatedAt: string };
     voice: { status: string; error?: string; updatedAt: string };
