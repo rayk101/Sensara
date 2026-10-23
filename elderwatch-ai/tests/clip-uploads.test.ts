@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { clipFileName, clipPolicy } from "../src/lib/clipPolicy";
 import { prepareUpload, completeUpload } from "../src/lib/platform/uploads";
 import { createSafetyEvent } from "../src/lib/db/events";
@@ -26,7 +25,7 @@ for (const source of ["live_camera", "multi_feed_demo"] as const) {
     await updateSettings({ recordingEnabled: true });
     const policy = clipPolicy(source);
     const start = new Date(Date.now() - 30_000).toISOString();
-    const event: SafetyEvent = await createSafetyEvent({ ...generateMockEvents()[0], _id: randomUUID(), severity: "urgent", source,
+    const event: SafetyEvent = await createSafetyEvent({ ...generateMockEvents()[0], severity: "urgent", source,
       createdAt: start, firstUrgentAt: start, hasVideoClip: false, videoClipId: null, videoClip: null });
     const prepared = await prepareUpload({ eventId: event._id, residentId: event.residentId, contentType: "video/webm", fileSize: 100 });
     assert.ok(prepared.s3Key.endsWith(clipFileName(event, "webm")));

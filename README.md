@@ -38,7 +38,7 @@ The four prerecorded videos now run real Google MediaPipe Pose Landmarker Full i
 
 These times describe one 5 Hz measurement run on the bundled clips, not runtime timers or accuracy claims. Realtime sampling, partial body visibility, perspective and model errors can change outcomes. A missing pose or an implausible switch to furniture must not be presented as normal tracking. Samples and provenance are in `tests/fixtures/recorded-poses.*`.
 
-Tile color and the **Observation / Last observation** badge describe current or paused-frame evidence. **Patient priority: URGENT — unresolved saved incident** is a separate notice; incident history and response controls remain on the right. Old incidents never overwrite the current frame's color and are not automatically closed by playback, pausing or a lower observation.
+Tile color and the **Observation / Last observation** badge describe current or paused-frame evidence. **Patient priority: CRITICAL — unresolved saved incident** is a separate notice; incident history and response controls remain on the right. Old incidents never overwrite the current frame's color and are not automatically closed by playback, pausing or a lower observation.
 
 `poseEvidence.ts` is the shared browser/server policy. These are prototype engineering choices, **not medically validated thresholds**:
 
@@ -65,7 +65,7 @@ One active episode exists per patient and event category, enforced by unique ind
 
 Responses: OPEN → ACKNOWLEDGED → RESOLVED; OPEN or ACKNOWLEDGED → DISMISSED. Resolution/dismissal requires a reason. The server records actor identity, timestamp and audit history; terminal records remain stored. Acknowledgment does not resolve an incident or cancel evidence capture. Active urgent incidents remain urgent independently of observation or camera health. Reminders are disabled.
 
-The persistent Node worker polls MongoDB every three seconds with atomic claims, expiring leases and conditional completion. Messaging intents are recovered after restart. Accepted messages are not resent for a video failure. Ambiguous submitted messages remain UNKNOWN for manual review; retries may duplicate a provider send. Rate-limit retries are bounded with backoff. Voice and messaging run independently from the 15-second clip.
+The persistent Node worker polls MongoDB every three seconds with atomic claims, expiring leases and conditional completion. Messaging intents are recovered after restart. Accepted messages are not resent for a video failure. Ambiguous submitted messages remain UNKNOWN for manual review; retries may duplicate a provider send. Rate-limit retries are bounded with backoff. Voice and messaging run independently from incident video capture.
 
 ## Configuration
 
@@ -101,9 +101,9 @@ Create an account entry using `scripts/create-staff.mjs`, feeding a password thr
 
 ### Video storage
 
-Recordings use the explicit 15-second post-event fallback; no pre-event buffer is claimed. Partial/unavailable captures are labeled and do not mark a full clip available. Camera loss, patient switching or leaving the page can lose uncaptured footage. A worker cannot reconstruct it. Existing microphone tracks are included only after explicit audio consent.
+Urgent observations display as **CRITICAL**. Each newly critical incident automatically records **15 seconds in Live Camera** or **7 seconds in Multi-feed Demo** (within the requested 5–8 seconds). A Watching incident promoted to Critical triggers capture even when its incident ID stays the same. Repeated urgent samples do not create duplicate recordings for that incident. Recordings start after escalation; no pre-event buffer is claimed. Partial/unavailable captures are labeled and do not mark a full clip available. Camera loss, patient switching or leaving the page can lose uncaptured footage. A worker cannot reconstruct it. Existing microphone tracks are included only after explicit audio consent.
 
-S3 stays private. The IAM scope is GetObject/PutObject under `critical-events/*`; keys include patient, incident and upload IDs. Presigned PUT/GET URLs expire in five minutes. PUT uses If-None-Match to prevent overwrites. The server checks ownership, type, size (50 MB maximum), container signature and fully decodes the video with ffmpeg before linking it. Actual media duration is measured separately from capture timestamps. The ffmpeg-static npm dependency supplies local decoding; Docker uses Alpine ffmpeg.
+S3 stays private. The IAM scope is GetObject/PutObject under `critical-events/*`; keys include patient and incident IDs plus readable timestamped filenames. Multi-feed files use the patient's first name (`eleanor-<timestamp>.webm`, `robert-<timestamp>.mp4`, etc.); live-camera files use `live-feed-demo-<timestamp>.webm` (or `.mp4`, according to browser support). Names come from the saved incident, not upload-client input. The server chooses the duration policy from the incident source and verifies both capture timestamps and decoded media duration. Presigned PUT/GET URLs expire in five minutes. PUT uses If-None-Match to prevent overwrites. The server checks ownership, type, size (50 MB maximum), container signature and fully decodes the video with ffmpeg before linking it. Actual media duration is measured separately from capture timestamps. The ffmpeg-static npm dependency supplies local decoding; Docker uses Alpine ffmpeg.
 
 Playback access expires according to `retentionDays`. Physical S3 deletion is a separate bucket lifecycle setting and is not yet applied by this app. Current IAM has no delete/admin permission. Do not describe access expiry as object deletion. Secure server logging, bucket access logging, lifecycle policy and organizational retention approval remain deployment work.
 
