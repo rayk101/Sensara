@@ -318,17 +318,18 @@ export default function PoseCamera({
         }
       }
 
-      // 5. Severity status chip (top-left)
-      const chipColor = observationAvailable && status === "running" ? SEVERITY_COLORS[severity] : "#94a3b8";
-      const chipLabel = observationAvailable && status === "running" ? (severity === "watch" ? "WATCHING" : severity.toUpperCase()) : "UNKNOWN";
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(8, 8, 110, 28, 6);
-      else ctx.rect(8, 8, 110, 28);
-      ctx.fill();
-      ctx.fillStyle = chipColor;
-      ctx.font = "bold 13px monospace";
-      ctx.fillText(`● ${chipLabel}`, 16, 27);
+      // 5. Show a severity chip only when there is a current observation.
+      if (observationAvailable && status === "running") {
+        const chipLabel = severity === "watch" ? "WATCHING" : severity.toUpperCase();
+        ctx.fillStyle = "rgba(0,0,0,0.65)";
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(8, 8, 110, 28, 6);
+        else ctx.rect(8, 8, 110, 28);
+        ctx.fill();
+        ctx.fillStyle = SEVERITY_COLORS[severity];
+        ctx.font = "bold 13px monospace";
+        ctx.fillText(`● ${chipLabel}`, 16, 27);
+      }
 
       drawingRef.current = requestAnimationFrame(draw);
     }
