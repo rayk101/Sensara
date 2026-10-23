@@ -59,7 +59,7 @@ export interface SafetySignals {
   // Time-based signals — populated by useResidentMonitor, undefined in persisted records
   secondsOutsideSafeZone?: number;   // continuous seconds torso center has been outside safe zone
   secondsHighMovement?: number;      // continuous seconds of sustained high movement (seizure detection)
-  handsNearThroatSeconds?: number;   // continuous seconds with hands near throat area (choking)
+  handsNearThroatSeconds?: number;   // observed seconds with either hand near the neck; excludes occluded intervals
   secondsLyingDown?: number;         // continuous seconds the resident has been detected lying down
   bothArmsHanging?: boolean;       // visible extended arms directed downward
   secondsSlumped?: number;         // continuous leaned torso + both hanging arms
