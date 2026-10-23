@@ -9,9 +9,10 @@ export interface PoseObservation extends SafetyClassification {
 // Engineering gates for this prototype, NOT medically validated thresholds.
 // Evidence is measured in media seconds; pauses, seeks and missing frames cannot
 // count toward a sustained condition. No rule depends on a clip name or offset.
-export const POSE_POLICY = { version: "landmarks-v1", visibility: 0.5, maxGap: 0.8, windowSeconds: 12, fallHold: 0.8, transitionWindow: 4, gestureHold: 2, postureHold: 0.6, slumpHold: 2, slumpAngle: 45 } as const;
+export const POSE_POLICY = { version: "landmarks-v1", visibility: 0.5, maxGap: 0.8, windowSeconds: 12, absenceHold: 1, fallHold: 0.8, transitionWindow: 4, gestureHold: 2, postureHold: 0.6, slumpHold: 2, slumpAngle: 45 } as const;
 const core = [11, 12, 23, 24];
 const usable = (p: PoseLandmark | undefined): p is PoseLandmark => !!p && (p.visibility ?? 0) >= POSE_POLICY.visibility;
+const inView = (p: PoseLandmark | undefined): p is PoseLandmark => usable(p) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
 const midpoint = (a: PoseLandmark, b: PoseLandmark) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }, aspect: number) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
 
@@ -45,22 +46,37 @@ export function analyzePoseWindow(frames: PoseFrame[], aspect = 16 / 9, safeZone
   let lastCoreTime = -1;
   let lastTime = -1, lowSince: number | null = null, gestureSince: number | null = null, leanSince: number | null = null, outsideSince: number | null = null;
   let slumpSince: number | null = null;
+  let absentSince: number | null = null;
+  // Only processed, consecutive video frames establish absence. No frames
+  // (paused playback, loading or a failed worker) remain unavailable.
+  const absent = (time: number): PoseObservation => {
+    absentSince ??= time;
+    const observation = unavailable();
+    if (time - absentSince + 1e-6 < POSE_POLICY.absenceHold) return observation;
+    return { ...observation, available: true, severity: "watch", eventType: "out_of_frame",
+      reason: "Person out of view — not detected in the monitored area. Check their location.",
+      signals: { ...observation.signals, insideSafeZone: false },
+      metrics: { ...observation.metrics, samples: frames.length } };
+  };
   let fallTransitionAt: number | null = null, fallConfirmed = false;
   let result: PoseObservation = unavailable();
   for (const frame of frames) {
     const lm = frame.landmarks;
     if (lastTime >= 0 && (frame.time <= lastTime || frame.time - lastTime > POSE_POLICY.maxGap)) {
-      anchor = null; prior = null; upright = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; fallTransitionAt = null; fallConfirmed = false;
+      anchor = null; prior = null; upright = null; absentSince = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; fallTransitionAt = null; fallConfirmed = false;
     }
     lastTime = frame.time;
-    if (!lm || !core.every(i => usable(lm[i]) && lm[i].x >= 0 && lm[i].x <= 1 && lm[i].y >= 0 && lm[i].y <= 1)) {
+    if (!lm || !core.every(i => inView(lm[i]))) {
       prior = null; slumpSince = lowSince = leanSince = outsideSince = null;
       if (frame.time - lastCoreTime > POSE_POLICY.maxGap) { upright = null; fallTransitionAt = null; fallConfirmed = false; }
       result = unavailable();
-      if (lm && [0, 11, 12].every(i => usable(lm[i]))) result.reason = "Upper body only — include hips for posture/fall tracking and keep hands visible for gesture assessment.";
+      if (!lm || !core.some(i => inView(lm[i]))) result = absent(frame.time);
+      else absentSince = null; // A partially visible person is not an empty room.
+      const upperBodyVisible = lm && [0, 11, 12].every(i => inView(lm[i]));
+      if (upperBodyVisible) result.reason = "Upper body only — include hips for posture/fall tracking and keep hands visible for gesture assessment.";
       // Upper-body gestures can be observed while the hips are out of view.
       // This never supplies fall or normal/full-body evidence.
-      const { left, right } = lm ? neckGesture(lm, aspect) : { left: false, right: false };
+      const { left, right } = upperBodyVisible ? neckGesture(lm, aspect) : { left: false, right: false };
       if (left && right) gestureSince ??= frame.time; else gestureSince = null;
       const held = gestureSince === null ? 0 : frame.time - gestureSince;
       if (left || right) result = { ...result, available: true,
@@ -76,7 +92,7 @@ export function analyzePoseWindow(frames: PoseFrame[], aspect = 16 / 9, safeZone
     const torso = distance(shoulder, hip, aspect);
     const angle = Math.atan2(Math.abs(shoulder.x - hip.x) * aspect, Math.abs(shoulder.y - hip.y)) * 180 / Math.PI;
     if (shoulder.y > hip.y && angle < 65) {
-      result = unavailable(); prior = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; continue;
+      result = absent(frame.time); prior = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; continue;
     }
     // Reject an abrupt switch to a different location (e.g. a chair mistaken
     // for a person after the tracked subject leaves). Reacquire near the last
@@ -84,15 +100,16 @@ export function analyzePoseWindow(frames: PoseFrame[], aspect = 16 / 9, safeZone
     if (anchor && distance(hip, anchor.hip, aspect) > Math.max(.15, anchor.torso * 1.5)) {
       prior = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null;
       upright = null; fallTransitionAt = null; fallConfirmed = false;
-      result = unavailable();
-      if (frame.time - anchor.time >= .8) result = { ...result, severity: "watch", eventType: "out_of_frame", reason: "Body tracking lost after a position discontinuity — check the video or resident location" };
+      result = absent(frame.time);
       continue;
     }
     if (torso < 0.04) {
       // Foreshortening/occlusion is UNKNOWN, not a horizontal pose. Retain only
       // the recent measured transition; require new visible hold evidence.
-      result = unavailable(); prior = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; continue;
+      absentSince = null; result = unavailable(); prior = null; slumpSince = lowSince = gestureSince = leanSince = outsideSince = null; continue;
     }
+
+    absentSince = null;
 
     const low = angle >= 65;
     const shift = upright && frame.time - upright.time <= POSE_POLICY.transitionWindow ? (shoulder.y - upright.shoulder.y) / upright.torso : 0;

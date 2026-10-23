@@ -28,6 +28,7 @@ const EVENT_LABELS: Record<string, string> = {
   possible_fall: "Possible Fall",
   fall_risk: "Fall Risk",
   wandering: "Wandering",
+  out_of_frame: "Person out of view",
   possible_choking: "Possible Choking",
   unsafe_posture: "Unsafe Posture",
   immobility: "Immobility",

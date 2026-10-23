@@ -81,7 +81,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const activeEpisodeKey = `${residentId}:${episodeCategory(String(input.eventType))}`;
   const idempotencyKey = createHash("sha256").update(`${residentId}:${sessionId ?? "manual"}:${requestId}`).digest("hex");
   const now = new Date().toISOString();
-  const observed = (source === "live_camera" || source === "multi_feed_demo") && !signals.visible ? "unknown" : String(input.severity);
+  const observed = (source === "live_camera" || source === "multi_feed_demo") && input.available !== true ? "unknown" : String(input.severity);
   const observation = (prior: Record<string, unknown> | null | undefined) => {
     // This window stabilizes the UI and rearms episodes; it makes no safety claim.
     const normalSince = observed === "stable" ? (typeof prior?.normalSince === "string" ? prior.normalSince : detectedAt) : null;

@@ -39,6 +39,7 @@ const EVENT_LABELS: Record<string, string> = {
   possible_fall: "Possible Fall",
   fall_risk: "Fall Risk",
   wandering: "Wandering",
+  out_of_frame: "Person out of view",
   possible_choking: "Possible Choking",
   unsafe_posture: "Unsafe Posture",
   immobility: "Immobility",
@@ -169,7 +170,7 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
             onWaiting={() => setPlaybackStatus("starting")}
             className="w-full h-full object-cover"
           />
-        {lastPose?.landmarks && currentStatus.available && <svg aria-label="Tracked body landmarks" className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none">
+        {lastPose?.landmarks && currentStatus.available && currentStatus.signals.visible && <svg aria-label="Tracked body landmarks" className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1 1" preserveAspectRatio="none">
           {POSE_CONNECTIONS.map(([a, b]) => { const p = lastPose.landmarks![a], q = lastPose.landmarks![b]; return p && q && (p.visibility ?? 0) >= .5 && (q.visibility ?? 0) >= .5 ? <line key={`${a}-${b}`} x1={p.x} y1={p.y} x2={q.x} y2={q.y} stroke="#38bdf8" strokeWidth="0.003" /> : null; })}
         </svg>}
         {videoError && (
@@ -213,7 +214,7 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
       <details className="bg-sensara-forest-900 px-3 py-1 text-[10px] text-white/80">
         <summary className="cursor-pointer">Body tracking details</summary>
         <p>{pose.status} · Torso angle {Math.round(currentStatus.metrics.torsoAngle)}° · Downward shift {currentStatus.metrics.downwardShift.toFixed(2)} torso lengths · Two hands near neck: {currentStatus.metrics.bothHandsNearNeck ? "yes" : "no"} · {currentStatus.metrics.samples} samples</p>
-        <p>MediaPipe landmarks measured on video frames. Low visibility means UNKNOWN. Thresholds are engineering heuristics, not medical probabilities.</p>
+        <p>MediaPipe landmarks measured on video frames. Sustained absence means WATCHING; partial visibility or unavailable tracking means UNKNOWN. Thresholds are engineering heuristics, not medical probabilities.</p>
       </details>
       {/* Footer */}
       <div className="px-3 py-2 bg-sensara-forest-900/95 flex items-center justify-between gap-2">
