@@ -143,7 +143,8 @@ test("brief hand occlusion preserves prior evidence but missing time never advan
   assert.equal(analyzePoseWindow(f.slice(0, 18)).severity, "urgent");
   const longerLoss = frames("neck", 21);
   for (let i = 6; i <= 8; i++) longerLoss[i].landmarks.forEach(p => { p.visibility = 0; });
-  assert.equal(analyzePoseWindow(longerLoss).severity, "watch");
+  assert.equal(analyzePoseWindow(longerLoss).severity, "urgent");
+  assert.ok(Math.abs(analyzePoseWindow(longerLoss).signals.handsNearThroatSeconds! - 3.2) < 1e-6);
 });
 
 test("lowering a hand, alternating brief gestures, off-screen points and sampling gaps cannot accumulate urgent evidence", () => {
@@ -178,8 +179,13 @@ test("confirmed neck urgency survives boundary jitter and brief occlusion until 
     assert.equal(analyzePoseWindow([...f, ...lowered.slice(0, 5)]).severity, "urgent");
     assert.equal(analyzePoseWindow([...f, ...lowered]).severity, "stable");
     assert.equal(analyzePoseWindow([...f, ...lowered, { time: 7.4, landmarks: pose("neck") }]).severity, "watch");
-    const lost: PoseFrame[] = Array.from({ length: 4 }, (_, i) => ({ time: 6.2 + i * .2, landmarks: null }));
-    assert.equal(analyzePoseWindow([...f, ...lost]).available, false, "Tracking loss cannot retain a current observation indefinitely");
+    const lost: PoseFrame[] = Array.from({ length: 7 }, (_, i) => ({ time: 6.2 + i * .2, landmarks: null }));
+    assert.equal(analyzePoseWindow([...f, ...lost.slice(0, 6)]).severity, "urgent");
+    const absent = analyzePoseWindow([...f, ...lost]);
+    assert.equal(absent.severity, "watch", "Prolonged absence must not retain current urgency indefinitely");
+    assert.equal(absent.eventType, "out_of_frame");
+    assert.equal(absent.diagnostics?.left.seconds, 0);
+    assert.match(absent.diagnostics?.lastReset?.reason ?? "", /Tracking gap/);
   }
 });
 
@@ -190,6 +196,53 @@ test("a long ongoing gesture with jitter stays urgent after the rolling evidence
     const time = f[i].time;
     assert.equal(analyzePoseWindow(f.slice(0, i + 1).filter(frame => time - frame.time <= 12)).severity, "urgent", `media time ${time}`);
   }
+});
+
+test("repeated 600ms confidence dropouts pause evidence rather than prevent escalation at 5Hz", () => {
+  const f = frames("neck", 181);
+  f.forEach((frame, i) => {
+    if ([6, 7, 8].includes(i % 10)) frame.landmarks.forEach(p => { p.visibility = .2; });
+  });
+  for (let i = 0; i < f.length; i++) {
+    const result = analyzePoseWindow(f.slice(0, i + 1).filter(frame => f[i].time - frame.time <= 12));
+    assert.equal(result.severity === "urgent", i >= 23, `media time ${f[i].time}`);
+    assert.equal(result.diagnostics?.lastReset, null);
+    if (i >= 6 && i <= 9) assert.equal(result.diagnostics?.left.seconds, 1, "Missing and recovery intervals add no time");
+    if (i === 7) {
+      assert.ok(Math.abs(result.diagnostics!.sampleHz - 5) < 1e-6);
+      assert.equal(result.diagnostics?.left.state, "missing");
+      assert.equal(result.diagnostics?.left.confidence, .2);
+      assert.match(result.diagnostics?.blocker ?? "", /not reliably tracked/);
+    }
+  }
+});
+
+test("skipped samples preserve progress within grace without crediting the missing interval", () => {
+  const start = frames("neck", 6); // One observed second.
+  const recovered = [...start, { time: 2, landmarks: pose("neck") }];
+  const result = analyzePoseWindow(recovered);
+  assert.equal(result.diagnostics?.left.seconds, 1);
+  assert.equal(result.diagnostics?.sampleGap, 1);
+  assert.equal(result.diagnostics?.lastReset, null);
+  const continued = [...recovered, ...frames("neck", 11).slice(1).map(f => ({ ...f, time: f.time + 2 }))];
+  assert.equal(analyzePoseWindow(continued).severity, "urgent");
+  const expired = analyzePoseWindow([...start, { time: 2.4, landmarks: pose("neck") }]);
+  assert.equal(expired.severity, "watch");
+  assert.equal(expired.diagnostics?.left.seconds, 0);
+  assert.match(expired.diagnostics?.lastReset?.reason ?? "", /Tracking gap/);
+  const sparse = Array.from({ length: 10 }, (_, i) => ({ time: i * .6, landmarks: pose("neck") }));
+  assert.notEqual(analyzePoseWindow(sparse).severity, "urgent", "Sparse samples alone cannot manufacture sustained evidence");
+});
+
+test("diagnostics distinguish visible release, tracking loss and rejected body geometry", () => {
+  const released = analyzePoseWindow([...frames("neck", 6), ...frames("upright", 4).map(f => ({ ...f, time: f.time + 1.2 }))]);
+  assert.match(released.diagnostics?.lastReset?.reason ?? "", /visibly away/);
+  const bad = pose("neck");
+  bad[11].y = bad[12].y = .8;
+  const rejected = analyzePoseWindow([...frames("neck", 6), { time: 1.2, landmarks: bad }]);
+  assert.match(rejected.diagnostics?.lastReset?.reason ?? "", /inverted torso/);
+  assert.equal(rejected.diagnostics?.left.seconds, 0);
+  assert.match(analyzePoseWindow([]).diagnostics?.blocker ?? "", /Waiting/);
 });
 
 // Real-time browser sampling includes a brief occlusion during the descent.

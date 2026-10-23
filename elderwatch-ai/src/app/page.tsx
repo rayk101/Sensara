@@ -113,7 +113,7 @@ export default function Dashboard() {
   const monitoringRequested = !isPaused && monitoringConsent && mainTab === "live-camera";
   const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera", cameraAttempt);
   const monitoringPaused = !monitoringRequested;
-  const { signals, classification, observationAvailable, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
+  const { signals, classification, observationAvailable, diagnostics, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     selectedResident ?? null,
     safeZone,
     { isPaused: monitoringPaused, seizureDetectionEnabled, sessionId }
@@ -124,6 +124,8 @@ export default function Dashboard() {
     monitoringRequested,
     processFrame, cameraId, selectedResident?.id
   );
+  const gestureSeconds = diagnostics && poseStatus === "running" && !monitoringPaused
+    ? Math.max(diagnostics.left.seconds, diagnostics.right.seconds) : 0;
 
   const restartCamera = () => { setCameraAttempt(n => n + 1); setIsPaused(false); retryCamera(); };
 
@@ -451,14 +453,14 @@ export default function Dashboard() {
                       active={signals.leftHandNearThroat ?? false}
                       activeColor="text-red-600"
                       activeLabel="Near throat"
-                      inactiveLabel="Away"
+                      inactiveLabel={diagnostics?.left.state === "missing" ? "Not tracked" : "Away"}
                     />
                     <DebugPill
                       label="Right Hand"
                       active={signals.rightHandNearThroat ?? false}
                       activeColor="text-orange-600"
                       activeLabel="Near throat"
-                      inactiveLabel="Away"
+                      inactiveLabel={diagnostics?.right.state === "missing" ? "Not tracked" : "Away"}
                     />
                     <DebugPill
                       label="Both Hands"
@@ -473,20 +475,32 @@ export default function Dashboard() {
                         <div
                           className="h-full rounded-full transition-all duration-200"
                           style={{
-                            width: `${Math.min(100, ((signals.handsNearThroatSeconds ?? 0) / POSE_POLICY.gestureHold) * 100)}%`,
-                            background: (signals.handsNearThroatSeconds ?? 0) >= POSE_POLICY.gestureHold
+                            width: `${Math.min(100, (gestureSeconds / POSE_POLICY.gestureHold) * 100)}%`,
+                            background: gestureSeconds >= POSE_POLICY.gestureHold
                               ? "#ef4444"
-                              : (signals.handsNearThroatSeconds ?? 0) > 0
+                              : gestureSeconds > 0
                               ? "#f97316"
                               : "#d4c9b0",
                           }}
                         />
                       </div>
                       <span className="text-[10px] text-sensara-forest-700 w-8 text-right">
-                        {((signals.handsNearThroatSeconds ?? 0)).toFixed(1)}s
+                        {gestureSeconds.toFixed(1)}s
                       </span>
                     </div>
                   </div>
+                  <details className="mt-2 text-xs text-sensara-forest-700">
+                    <summary className="cursor-pointer">Live tracking diagnostics</summary>
+                    {diagnostics && poseStatus === "running" && !monitoringPaused ? (
+                      <div className="mt-2 space-y-1 tabular-nums">
+                        <p>Processed samples: {diagnostics.sampleHz.toFixed(1)}/s · Last sample gap: {diagnostics.sampleGap.toFixed(2)}s</p>
+                        <p>Landmark visibility confidence: head/shoulders {Math.round(diagnostics.upperBodyConfidence * 100)}% · Left hand {Math.round(diagnostics.left.confidence * 100)}% · Right hand {Math.round(diagnostics.right.confidence * 100)}%</p>
+                        <p>Left timer: {diagnostics.left.seconds.toFixed(1)}s / {POSE_POLICY.gestureHold}s ({diagnostics.left.state}) · Right timer: {diagnostics.right.seconds.toFixed(1)}s / {POSE_POLICY.gestureHold}s ({diagnostics.right.state})</p>
+                        <p>{diagnostics.blocker ?? "Tracking available"}. Missing samples pause progress for up to {POSE_POLICY.gestureOcclusionGrace}s; they do not add gesture time.</p>
+                        <p>Last reset in the {POSE_POLICY.windowSeconds}s evidence window: {diagnostics.lastReset ? `${diagnostics.lastReset.reason} at video time ${diagnostics.lastReset.time.toFixed(1)}s` : "None"}</p>
+                      </div>
+                    ) : <p className="mt-2">{monitoringPaused ? "Monitoring paused — gesture timers cleared." : "Waiting for fresh tracking samples."}</p>}
+                  </details>
                 </div>
 
                 {/* Analytics + AI + Audio Monitor */}

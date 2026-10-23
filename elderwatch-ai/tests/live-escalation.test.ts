@@ -11,10 +11,10 @@ import { saveResident } from "../src/lib/db/residents";
 import { startSession } from "../src/lib/platform/sessions";
 import { submitDetection } from "../src/lib/platform/incidents";
 import { monitoringState } from "../src/lib/platform/monitoring";
-import type { PoseFrame } from "../src/lib/poseEvidence";
+import type { PoseFrame, PoseDiagnostics } from "../src/lib/poseEvidence";
 import { pose } from "./fixtures/poseFrames";
 
-test("live one-hand gesture stays urgent on canvas and server through jitter across rolling windows", async () => {
+test("live one-hand gesture reaches and retains urgent through repeated 600ms dropouts on canvas and server", async () => {
   delete process.env.MONGODB_URI;
   const resident = await saveResident({ ...MOCK_RESIDENTS[0], id: `gesture_${randomUUID()}` });
   const session = await startSession({ residentId: resident.id, source: "live_camera", deviceId: "test-camera", consent: true });
@@ -32,6 +32,7 @@ test("live one-hand gesture stays urgent on canvas and server through jitter acr
   let nextDraw = 0, renderer: ReactTestRenderer | undefined;
   const labels: string[] = [], errors: string[] = [];
   let sendFrame!: (frame: PoseFrame) => void;
+  let diagnostics: PoseDiagnostics | null = null;
   globalThis.requestAnimationFrame = callback => { draws.set(++nextDraw, callback); return nextDraw; };
   globalThis.cancelAnimationFrame = id => { draws.delete(id); };
   // Exercise the real server classifier with the hook's request; no external
@@ -52,6 +53,7 @@ test("live one-hand gesture stays urgent on canvas and server through jitter acr
     const videoRef = useRef<HTMLVideoElement>(null), canvasRef = useRef<HTMLCanvasElement>(null);
     const [landmarks, setLandmarks] = useState<PoseFrame["landmarks"]>(null);
     const monitor = useResidentMonitor(resident, DEFAULT_SAFE_ZONE, { sessionId: session.id, isPaused: paused });
+    diagnostics = monitor.diagnostics;
     sendFrame = frame => { setLandmarks(frame.landmarks); monitor.processFrame(frame.landmarks, { time: frame.time, aspect: 4 / 3 }); };
     return createElement(PoseCamera, { videoRef, canvasRef, landmarks, status: paused ? "idle" : "running", errorMessage: null,
       safeZone: DEFAULT_SAFE_ZONE, severity: monitor.classification.severity, observationAvailable: monitor.observationAvailable && !paused });
@@ -68,11 +70,11 @@ test("live one-hand gesture stays urgent on canvas and server through jitter acr
       const landmarks = pose("neck");
       for (const index of [16, 20]) landmarks[index].y = .7;
       for (const index of [23, 24]) landmarks[index].visibility = 0;
-      if (i >= 20 && i < 180 && i % 10 === 0) for (const index of [15, 19]) landmarks[index].y = .7;
-      const brieflyMissing = i >= 20 && i % 10 === 5;
+      const brieflyMissing = [6, 7, 8].includes(i % 10);
       await act(async () => sendFrame({ time: mediaTime, landmarks: brieflyMissing ? null : landmarks }));
-      assert.deepEqual(draw(), [i < 15 ? "● WATCHING" : "● URGENT"], `media time ${mediaTime}`);
-      if (i >= 15 && i % 5 === 0) assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "URGENT");
+      assert.deepEqual(draw(), i < 23 && brieflyMissing ? [] : [i < 23 ? "● WATCHING" : "● URGENT"], `media time ${mediaTime}`);
+      if (i >= 23 && i % 5 === 0) assert.equal((await monitoringState()).find(p => p.patientId === resident.id)?.observed, "URGENT");
+      if (i === 8) assert.equal((diagnostics as PoseDiagnostics | null)?.left.seconds, 1);
     }
     for (let i = 0; i <= 5; i++) {
       mediaTime = 36.2 + i * .2;
@@ -83,6 +85,7 @@ test("live one-hand gesture stays urgent on canvas and server through jitter acr
     assert.deepEqual(errors, []);
     await act(async () => renderer!.update(createElement(Probe, { paused: true })));
     assert.deepEqual(draw(), []);
+    assert.equal(diagnostics, null, "Pausing clears stale diagnostic progress");
     await act(async () => renderer!.update(createElement(Probe, { paused: false })));
     const landmarks = pose("neck");
     mediaTime = 38;
