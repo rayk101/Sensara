@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { POSE_CONNECTIONS, LM, clampSafeZone } from "@/lib/poseHelpers";
+import { POSE_CONNECTIONS, clampSafeZone } from "@/lib/poseHelpers";
+import { neckGesture } from "@/lib/poseEvidence";
 import type { PoseLandmark, SafeZone, ResidentStatusValue } from "@/lib/types";
 import type { PoseStatus } from "@/hooks/usePoseDetection";
 
@@ -270,41 +271,19 @@ export default function PoseCamera({
           ctx.stroke();
         }
 
-        // Choking detection overlay: throat marker + hand proximity rings
-        const nose = landmarks[LM.NOSE];
-        const lShoulder = landmarks[LM.LEFT_SHOULDER];
-        const rShoulder = landmarks[LM.RIGHT_SHOULDER];
-        if (nose && lShoulder && rShoulder &&
-            (nose.visibility === undefined || nose.visibility > 0.3)) {
-          const shoulderMidX = (lShoulder.x + rShoulder.x) / 2;
-          const shoulderMidY = (lShoulder.y + rShoulder.y) / 2;
-          const throatNX = shoulderMidX + 0.65 * (nose.x - shoulderMidX);
-          const throatNY = shoulderMidY + 0.65 * (nose.y - shoulderMidY);
-          const txC = mirrorX(throatNX) * W;
-          const tyC = throatNY * H;
-          const HAND_DIST = 0.16;
-          const dist2 = (lm: { x: number; y: number }) =>
-            Math.sqrt((lm.x - throatNX) ** 2 + (lm.y - throatNY) ** 2);
-
-          // Check which hand landmarks are near throat (mirror X doesn't affect distance)
-          const handLMs = [
-            { lm: landmarks[LM.LEFT_WRIST],  color: "rgba(239,68,68,0.9)" },
-            { lm: landmarks[LM.LEFT_INDEX],  color: "rgba(239,68,68,0.9)" },
-            { lm: landmarks[LM.RIGHT_WRIST], color: "rgba(249,115,22,0.9)" },
-            { lm: landmarks[LM.RIGHT_INDEX], color: "rgba(249,115,22,0.9)" },
-          ];
-
-          let anyNear = false;
-          for (const { lm: handLm, color } of handLMs) {
-            if (!handLm || (handLm.visibility !== undefined && handLm.visibility < 0.3)) continue;
-            if (dist2(handLm) < HAND_DIST) {
-              anyNear = true;
-              ctx.beginPath();
-              ctx.arc(mirrorX(handLm.x) * W, handLm.y * H, 11, 0, 2 * Math.PI);
-              ctx.strokeStyle = color;
-              ctx.lineWidth = 2.5;
-              ctx.stroke();
-            }
+        // Use the detector's exact geometry; red rings mean measured evidence.
+        const gesture = neckGesture(landmarks, W / H);
+        if (gesture.neck) {
+          const txC = mirrorX(gesture.neck.x) * W;
+          const tyC = gesture.neck.y * H;
+          const anyNear = gesture.left === true || gesture.right === true;
+          for (const index of gesture.nearIndices) {
+            const handLm = landmarks[index];
+            ctx.beginPath();
+            ctx.arc(mirrorX(handLm.x) * W, handLm.y * H, 11, 0, 2 * Math.PI);
+            ctx.strokeStyle = index % 2 ? "rgba(239,68,68,0.9)" : "rgba(249,115,22,0.9)";
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
           }
 
           // Throat dot: yellow when idle, red when hands near

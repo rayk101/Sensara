@@ -21,13 +21,13 @@ function hanging() {
   }
   return p;
 }
-const sequence = (): PoseFrame[] => Array.from({ length: 17 }, (_, i) => ({ time: i * .2, landmarks: hanging() }));
+const sequence = (): PoseFrame[] => Array.from({ length: 27 }, (_, i) => ({ time: i * .2, landmarks: hanging() }));
 
-test("slumped hanging-arm posture watches through two seconds and becomes urgent only after", () => {
+test("slumped hanging-arm posture watches before four seconds and becomes urgent at four", () => {
   const f = sequence();
   assert.equal(analyzePoseWindow(f.slice(0, 10), 4/3).severity, "watch");
-  assert.equal(analyzePoseWindow(f.slice(0, 11), 4/3).severity, "watch");
-  const urgent = analyzePoseWindow(f.slice(0, 12), 4/3);
+  assert.equal(analyzePoseWindow(f.slice(0, 20), 4/3).severity, "watch");
+  const urgent = analyzePoseWindow(f.slice(0, 21), 4/3);
   assert.equal(urgent.severity, "urgent");
   assert.equal(urgent.eventType, "unsafe_posture");
   assert.equal(urgent.signals.bothArmsHanging, true);
@@ -51,7 +51,7 @@ test("missing, off-screen or low-confidence wrists cannot count as hanging arms"
   }
 });
 
-test("occlusion, pose interruption and sampling gaps restart the two-second hold", () => {
+test("occlusion, pose interruption and sampling gaps restart the four-second hold", () => {
   const hidden = sequence(); hidden[7].landmarks = null;
   assert.notEqual(analyzePoseWindow(hidden, 4/3).severity, "urgent");
   const moved = sequence(); moved[7].landmarks![16].y = .4;
@@ -71,12 +71,12 @@ test("server promotes one hanging-posture incident and starts independent urgent
   const request = (n: number) => ({ residentId: id, source: "live_camera", sessionId: session.id, aspect: 4/3, videoTime: frames[n-1].time, poseFrames: frames.slice(0,n), sourceEventId: randomUUID(), detectedAt: new Date().toISOString() });
   const watching = await submitDetection(request(6));
   assert.equal(watching?.severity, "watch");
-  const urgent = await submitDetection(request(12));
+  const urgent = await submitDetection(request(21));
   assert.equal(urgent?._id, watching?._id);
   assert.equal(urgent?.severity, "urgent");
   assert.equal(urgent?.workflow?.video.status, "requested");
   assert.equal(urgent?.workflow?.voice.status, "queued");
   assert.equal(urgent?.workflow?.messaging.status, "queued");
   assert.deepEqual(urgent?.workflow?.messaging.recipientIds, [`staff_${id}`]);
-  assert.equal((await submitDetection(request(17)))?._id, urgent?._id);
+  assert.equal((await submitDetection(request(27)))?._id, urgent?._id);
 });

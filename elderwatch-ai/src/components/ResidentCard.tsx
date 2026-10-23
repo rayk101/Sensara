@@ -1,6 +1,7 @@
 "use client";
 
 import SafetyBadge from "./SafetyBadge";
+import { POSE_POLICY } from "@/lib/poseEvidence";
 import type { ResidentProfile, SafetyClassification, SafetySignals } from "@/lib/types";
 
 interface ResidentCardProps {
@@ -88,7 +89,7 @@ export default function ResidentCard({
             </span>
           </div>
           <p className="text-sm text-sensara-forest-800">{reason}</p>
-          {available && <p className="text-xs text-sensara-warm-700">Hanging-arm posture: {signals.bothArmsHanging ? "both arms tracked down" : "both arms not confirmed"} · {(signals.secondsSlumped ?? 0).toFixed(1)}s / &gt;2s</p>}
+          {available && <p className="text-xs text-sensara-warm-700">Hanging-arm posture: {signals.bothArmsHanging ? "both arms tracked down" : "both arms not confirmed"} · {(signals.secondsSlumped ?? 0).toFixed(1)}s / {POSE_POLICY.slumpHold}s</p>}
 
           {/* Pose signal summary */}
           {available && <div className="grid grid-cols-3 gap-1 mt-2 text-[10px] font-mono">

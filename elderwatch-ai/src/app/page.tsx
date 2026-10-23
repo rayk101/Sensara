@@ -443,7 +443,7 @@ export default function Dashboard() {
                 <div className="bg-white border border-sensara-border rounded-lg px-3 py-2 shadow-sm">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] text-sensara-warm-600 font-medium uppercase tracking-wider">Observed hand gesture</span>
-                    <span className="text-[10px] text-sensara-warm-400">threshold: {POSE_POLICY.gestureHold}s</span>
+                    <span className="text-[10px] text-sensara-warm-400">Either hand held near neck: {POSE_POLICY.gestureHold}s to urgent</span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
                     <DebugPill

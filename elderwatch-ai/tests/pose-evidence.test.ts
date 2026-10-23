@@ -15,11 +15,13 @@ test("leaning stays watching; lying without a measured transition never implies 
   assert.equal(analyzePoseWindow(fall.slice(0, 17)).severity, "watch");
   assert.equal(analyzePoseWindow(fall).severity, "urgent");
 });
-test("a sustained two-hand gesture is needed; one hand or a brief gesture cannot trigger urgent", () => {
+test("either hand near the neck escalates at three seconds; brief gestures remain watching", () => {
   assert.notEqual(analyzePoseWindow(frames("neck", 7)).severity, "urgent");
   assert.equal(analyzePoseWindow(frames("neck")).severity, "urgent");
   const one = frames("neck"); one.forEach(f => { f.landmarks[16].y = .7; f.landmarks[20].y = .7; });
-  assert.equal(analyzePoseWindow(one).severity, "watch");
+  assert.equal(analyzePoseWindow(one.slice(0, 15)).severity, "watch");
+  assert.equal(analyzePoseWindow(one.slice(0, 16)).severity, "urgent");
+  assert.equal(analyzePoseWindow(one).eventType, "possible_choking");
 });
 test("missing landmarks, low visibility and sampling gaps cannot establish an urgent condition", () => {
   const missing: PoseFrame[] = [{ time: 0, landmarks: null }];
@@ -107,12 +109,54 @@ test("server persists out-of-view evidence as WATCHING without urgent workflows"
   assert.equal((await monitoringState()).find(p => p.patientId === "resident_003")?.observed, "WATCHING");
 });
 
-test("actual MediaPipe samples: brief neck gesture watches before sustained two-hand escalation", async () => {
+test("actual MediaPipe samples: neck gesture watches before three-second escalation", async () => {
   const { default: recorded } = await import("./fixtures/recorded-poses.json");
   const frames = recorded.choking as PoseFrame[];
   const results = frames.map((frame, i) => ({ time: frame.time, result: analyzePoseWindow(frames.slice(0, i + 1)) }));
-  assert.ok(results.filter(r => r.time < 7.8).every(r => r.result.severity !== "urgent"));
-  assert.equal(results.find(r => r.result.severity === "urgent")?.time.toFixed(1), "7.8");
+  assert.ok(results.filter(r => r.time < 8.8).every(r => r.result.severity !== "urgent"));
+  assert.equal(results.find(r => r.result.severity === "urgent")?.time.toFixed(1), "8.8");
+});
+
+test("one-hand neck gestures work with either hand, cropped hips and changes in framing", () => {
+  for (const aspect of [4 / 3, 16 / 9]) for (const hand of [[15, 19], [16, 20]]) {
+    const f = frames("upright", 51);
+    f.forEach((frame, i) => {
+      for (const index of hand) { frame.landmarks[index].x = .5; frame.landmarks[index].y = .23; }
+      if (i % 2 === 0) { frame.landmarks[23].visibility = 0; frame.landmarks[24].visibility = 0; }
+    });
+    assert.equal(analyzePoseWindow(f.slice(0, 15), aspect).severity, "watch");
+    assert.equal(analyzePoseWindow(f.slice(0, 16), aspect).severity, "urgent");
+    assert.equal(analyzePoseWindow(f, aspect).eventType, "possible_choking");
+    assert.equal(analyzePoseWindow(f, aspect).signals.bothHandsNearThroat, false);
+  }
+});
+
+test("brief hand occlusion preserves prior evidence but missing time never advances the timer", () => {
+  const f = frames("neck");
+  for (const index of [15, 19, 16, 20]) f[6].landmarks[index].visibility = 0;
+  assert.notEqual(analyzePoseWindow(f.slice(0, 7)).severity, "urgent");
+  const recovered = analyzePoseWindow(f.slice(0, 17)); // 3.2 media seconds, 2.8 observed seconds.
+  assert.equal(recovered.severity, "watch");
+  assert.ok(Math.abs(recovered.signals.handsNearThroatSeconds! - 2.8) < 1e-6);
+  assert.equal(analyzePoseWindow(f.slice(0, 18)).severity, "urgent");
+  const longerLoss = frames("neck", 21);
+  for (let i = 6; i <= 8; i++) longerLoss[i].landmarks.forEach(p => { p.visibility = 0; });
+  assert.equal(analyzePoseWindow(longerLoss).severity, "watch");
+});
+
+test("lowering a hand, alternating brief gestures, off-screen points and sampling gaps cannot accumulate urgent evidence", () => {
+  const lowered = frames("neck", 21); lowered[6] = { time: 1.2, landmarks: pose() };
+  assert.equal(analyzePoseWindow(lowered).severity, "watch");
+  const alternating = frames("upright", 51);
+  alternating.forEach((f, i) => { for (const j of (Math.floor(i / 5) % 2 ? [15, 19] : [16, 20])) { f.landmarks[j].x = .5; f.landmarks[j].y = .23; } });
+  assert.equal(analyzePoseWindow(alternating).severity, "watch");
+  const gap = frames("neck", 21); gap.forEach((f, i) => { if (i >= 7) f.time += 2; });
+  assert.equal(analyzePoseWindow(gap).severity, "watch");
+  for (const visibility of [0, .49, 1]) {
+    const hidden = frames("neck");
+    hidden.forEach(f => { for (const j of [15, 19, 16, 20]) { f.landmarks[j].visibility = visibility; if (visibility === 1) f.landmarks[j].x = -1; } });
+    assert.notEqual(analyzePoseWindow(hidden).severity, "urgent");
+  }
 });
 
 // Real-time browser sampling includes a brief occlusion during the descent.
