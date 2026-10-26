@@ -111,7 +111,7 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
     return response;
   }) as typeof fetch;
   function Probe({ event }: { event: SafetyEvent }) {
-    recording = useVideoRecorder(stream, event, null, false, saved => { savedEvent = saved; });
+    recording = useVideoRecorder(stream, event, null, false, saved => { savedEvent = saved; }, event.source === "live_camera" ? "live_camera" : "multi_feed_demo");
     if (recording.statusMessage) notices.push(recording.statusMessage);
     return createElement(RecordingNotice, { status: recording.recordingStatus, message: recording.statusMessage });
   }
@@ -137,10 +137,10 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       assert.equal(sessionResponse.status, 201);
       const session = await sessionResponse.json();
       const frames = measuredScenario(0);
-      const detection = async (count: number) => {
+      const detection = async (count: number, trigger?: { requestId: string; detectedAt: string }) => {
         const poseFrames = frames.slice(0, count);
         const response = await observe(request("/api/observations", { residentId, source, sessionId: session.id, scenarioId: "feed1", aspect: 16 / 9,
-          sourceEventId: randomUUID(), detectedAt: new Date().toISOString(), videoTime: poseFrames.at(-1)!.time, poseFrames }));
+          sourceEventId: trigger?.requestId ?? randomUUID(), detectedAt: trigger?.detectedAt ?? new Date().toISOString(), videoTime: poseFrames.at(-1)!.time, poseFrames }));
         assert.equal(response.status, 200, await response.clone().text());
         return (await response.json()).event as SafetyEvent;
       };
@@ -149,7 +149,14 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       const before = recorders.length;
       await act(async () => { renderer = create(createElement(Probe, { event: watching })); });
       assert.equal(recorders.length, before);
-      const critical = await detection(31);
+      const trigger = source === "live_camera" ? { requestId: randomUUID(), detectedAt: new Date().toISOString(), residentId } : undefined;
+      if (trigger) {
+        await act(async () => recording.beginLiveCapture(trigger));
+        assert.equal(recorders.length, before + 1, "Live recording starts before the critical-event API has responded");
+        t.mock.timers.tick(2000);
+      }
+      const critical = await detection(31, trigger);
+      if (trigger) await act(async () => recording.bindLiveCapture(trigger.requestId, critical));
       assert.equal(critical.severity, "urgent");
       if (previous) {
         assert.notEqual(critical._id, previous._id, "A previous open incident with a clip cannot suppress fresh capture");
@@ -160,7 +167,7 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       assert.ok(JSON.stringify(renderer!.toJSON()).includes(`recording ${seconds} seconds`));
       assert.equal(renderer!.root.findByProps({ role: "status" }).props["aria-live"], "polite");
       assert.equal(recorders.length, before + 1);
-      t.mock.timers.tick(seconds * 1000);
+      t.mock.timers.tick(seconds * 1000 - (trigger ? 2000 : 0));
       await act(async () => {
         recorders.at(-1)!.stop();
         for (let n = 0; n < 300 && !savedEvent && !failures.length; n++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -183,7 +190,8 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       assert.equal(saved.videoClip!.hasEmbeddedVoice, true);
       assert.ok(saved.videoClip!.s3Key.startsWith(source === "multi_feed_demo" ? "critical-events/demo/residents/" : "critical-events/live-camera/"));
       if (source === "live_camera") assert.equal(saved.videoClip!.s3Key.split("/").length, 3);
-      assert.ok(saved.videoClip!.fileName!.startsWith(source === "multi_feed_demo" ? "eleanor-brooks-" : "robert-hayes-"));
+      assert.ok(saved.videoClip!.fileName!.startsWith(source === "multi_feed_demo" ? "eleanor-brooks-" : "live-detection-"));
+      if (trigger) assert.equal(saved.videoClip!.clipStartTime, trigger.detectedAt);
       const listed = await clips(new Request(`http://localhost/api/video-clips?residentId=${residentId}`));
       assert.ok((await listed.json()).clips.some((clip: { _id: string }) => clip._id === saved.videoClipId));
       const playable = await playback(new Request(`http://localhost/api/video-clips/${saved.videoClipId}/playback-url`), { params: Promise.resolve({ id: saved.videoClipId! }) });

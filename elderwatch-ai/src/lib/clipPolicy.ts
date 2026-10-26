@@ -14,9 +14,13 @@ export function clipPolicy(source: SafetyEvent["source"]) {
 }
 
 export function clipFileName(event: SafetyEvent, extension: "mp4" | "webm") {
-  const timestamp = new Date(event.firstUrgentAt ?? event.createdAt).toISOString().replace(/[:.]/g, "-");
-  const incident = recordingSource(event) === "multi_feed_demo" ? "" : `--${event._id}`;
-  return `${patientFolderName(event.residentName)}-${timestamp}${incident}.${extension}`;
+  const live = recordingSource(event) === "live_camera";
+  const timestamp = new Date((live ? event.criticalDetectedAt : undefined) ?? event.firstUrgentAt ?? event.createdAt).toISOString().replace(/[:.]/g, "-");
+  if (live) {
+    if (!Number.isSafeInteger(event.liveDetectionNumber) || event.liveDetectionNumber! < 1) throw new Error("A live detection number is required");
+    return `live-detection-${event.liveDetectionNumber}-${timestamp}.${extension}`;
+  }
+  return `${patientFolderName(event.residentName)}-${timestamp}.${extension}`;
 }
 
 export function patientFolderName(name: string) {

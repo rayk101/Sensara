@@ -34,9 +34,9 @@ test("yesterday's open incident and clip cannot suppress a fresh live Critical r
   assert.equal((await getSafetyEvent(old._id!))?.videoClipId, "yesterdays-clip");
   assert.equal((await submitDetection(firstRequest))?._id, first._id, "Retry must not create another occurrence");
   const upload = await prepareUpload({ eventId: first._id, residentId: resident.id, contentType: "video/webm", fileSize: 100 });
-  assert.ok(upload.s3Key.startsWith("critical-events/live-camera/eleanor-brooks-"));
+  assert.ok(upload.s3Key.startsWith("critical-events/live-camera/live-detection-"));
   assert.equal(upload.s3Key.split("/").length, 3);
-  assert.ok(upload.s3Key.includes(first._id!));
+  assert.ok((await getSafetyEvent(first._id!))?.liveDetectionNumber);
 
   for (let i = 0; i < 10; i++) {
     t.mock.timers.tick(1000);

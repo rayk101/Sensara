@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { DEFAULT_SAFE_ZONE } from "@/lib/poseHelpers";
 import { analyzePoseWindow, POSE_POLICY, type PoseFrame, type PoseDiagnostics } from "@/lib/poseEvidence";
 import type { PoseFrameContext } from "./useVideoPose";
+import type { LiveCaptureTrigger } from "./useVideoRecorder";
 import type {
   PoseLandmark,
   SafetySignals,
@@ -19,6 +20,8 @@ interface MonitorOptions {
   isPaused?: boolean;
   sessionId?: string | null;
   seizureDetectionEnabled?: boolean;
+  onCriticalCapture?: (trigger: LiveCaptureTrigger) => void;
+  onCriticalPersisted?: (requestId: string, event: SafetyEvent | null) => void;
 }
 
 interface MonitorState {
@@ -41,6 +44,11 @@ export function useResidentMonitor(
   const frames = useRef<PoseFrame[]>([]);
   const lastObservation = useRef({ at: 0, severity: "", sessionId: "" });
   const pending = useRef(false);
+  const captureCallbacks = useRef(options);
+  useEffect(() => { captureCallbacks.current = options; }, [options]);
+  const criticalEdge = useRef({ urgent: false, category: "", nonUrgentSince: 0 });
+  const observationQueue = useRef<Array<{ body: Record<string, unknown>; patientId: string; captureId?: string; generation: number; recovery?: boolean; endpoint?: "/api/events" }>>([]);
+  const generation = useRef(0);
   const [state, setState] = useState<MonitorState>(() => ({
     observationAvailable: false,
     diagnostics: null,
@@ -80,6 +88,10 @@ export function useResidentMonitor(
 
   useEffect(() => {
     resetTimers();
+    const activeGeneration = ++generation.current;
+    for (const item of observationQueue.current) if (item.captureId) captureCallbacks.current.onCriticalPersisted?.(item.captureId, null);
+    observationQueue.current = [];
+    criticalEdge.current = { urgent: false, category: "", nonUrgentSince: 0 };
     setState(prev => ({ ...prev, observationAvailable: false, diagnostics: null,
       signals: { ...prev.signals, visible: false, secondsStill: 0 },
       classification: {
@@ -87,7 +99,12 @@ export function useResidentMonitor(
         reason: isPaused ? "Monitoring paused" : "Waiting for camera…",
       },
     }));
-  }, [isPaused, resetTimers]);
+    return () => {
+      generation.current = activeGeneration + 1;
+      for (const item of observationQueue.current) if (item.captureId) captureCallbacks.current.onCriticalPersisted?.(item.captureId, null);
+      observationQueue.current = [];
+    };
+  }, [isPaused, resident?.id, sessionId, resetTimers]);
 
   const upsertEvent = useCallback((event: SafetyEvent) => {
     if (event.residentId !== residentIdRef.current) return;
@@ -96,20 +113,38 @@ export function useResidentMonitor(
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_TIMELINE_LENGTH) }));
   }, []);
 
-  const saveEvent = useCallback(async (profile: ResidentProfile, classification: SafetyClassification, signals: SafetySignals) => {
-    try {
-      const saved = await persistEvent(profile, classification, signals, sessionId);
-      if (profile.id === residentIdRef.current) {
-        upsertEvent(saved);
-        setPersistenceError(null);
-      }
-      return saved;
-    } catch {
-      if (profile.id === residentIdRef.current) {
-        setPersistenceError("Could not save the latest alert. Check the server connection.");
-      }
+  const sendObservation = useCallback((item: typeof observationQueue.current[number]) => {
+    if (item.recovery && pending.current) {
+      // Retain a bounded, chronological recovery window behind a slow request.
+      // The server needs multiple non-urgent samples to rearm an open episode.
+      const tail = observationQueue.current;
+      let firstRecovery = tail.length;
+      while (firstRecovery > 0 && tail[firstRecovery - 1].recovery) firstRecovery--;
+      if (tail.length - firstRecovery >= 4) tail.splice(firstRecovery, 1);
     }
-  }, [upsertEvent, sessionId]);
+    observationQueue.current.push(item);
+    if (pending.current) return;
+    pending.current = true;
+    void (async () => {
+      try {
+        while (observationQueue.current.length) {
+          const next = observationQueue.current.shift()!;
+          try {
+            const response = await fetch(next.endpoint ?? "/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next.body), signal: AbortSignal.timeout(10000) });
+            const body = await response.json();
+            if (!response.ok) throw new Error();
+            const saved = next.endpoint ? body : body.event;
+            const current = next.generation === generation.current && next.patientId === residentIdRef.current;
+            if (next.captureId) captureCallbacks.current.onCriticalPersisted?.(next.captureId, current ? saved ?? null : null);
+            if (current) { if (saved) upsertEvent(saved); setPersistenceError(null); }
+          } catch {
+            if (next.captureId) captureCallbacks.current.onCriticalPersisted?.(next.captureId, null);
+            if (next.generation === generation.current && next.patientId === residentIdRef.current) setPersistenceError("Observation not saved. Remote notification is unavailable or unconfirmed.");
+          }
+        }
+      } finally { pending.current = false; }
+    })();
+  }, [upsertEvent]);
 
   // Runs in the worker-result callback; no chained landmark-state effect.
   const processFrame = useCallback((landmarks: PoseLandmark[] | null, context?: PoseFrameContext) => {
@@ -122,21 +157,29 @@ export function useResidentMonitor(
     const measured = analyzePoseWindow(frames.current, aspect, safeZone);
     setState(prev => ({ ...prev, observationAvailable: measured.available, diagnostics: measured.diagnostics ?? null, signals: measured.signals, classification: measured }));
     const observed = measured.available ? measured.severity : "unknown";
-    if (sessionId && !pending.current && (now - lastObservation.current.at >= 1000 || observed !== lastObservation.current.severity || sessionId !== lastObservation.current.sessionId)) {
-      pending.current = true;
+    let trigger: LiveCaptureTrigger | undefined;
+    if (sessionId && measured.available && measured.severity === "urgent") {
+      const category = ["possible_fall", "fall_risk", "unsafe_posture"].includes(measured.eventType) ? "fall" : measured.eventType;
+      if ((!criticalEdge.current.urgent || criticalEdge.current.category !== category) && resident.monitoringConfig?.recordingEnabled !== false) {
+        trigger = { requestId: crypto.randomUUID(), residentId: resident.id, detectedAt: new Date(now).toISOString() };
+        captureCallbacks.current.onCriticalCapture?.(trigger);
+      }
+      criticalEdge.current = { urgent: true, category, nonUrgentSince: 0 };
+    } else if (measured.available) {
+      if (!criticalEdge.current.nonUrgentSince) criticalEdge.current.nonUrgentSince = now;
+      if (now - criticalEdge.current.nonUrgentSince >= 2000) criticalEdge.current.urgent = false;
+    } else criticalEdge.current.nonUrgentSince = 0;
+    const recovery = !!criticalEdge.current.category && measured.available && measured.severity !== "urgent";
+    const queueRecovery = recovery && pending.current && (now - lastObservation.current.at >= 1000 || criticalEdge.current.nonUrgentSince === now);
+    if (sessionId && (trigger || queueRecovery || (!pending.current && (now - lastObservation.current.at >= 1000 || observed !== lastObservation.current.severity || sessionId !== lastObservation.current.sessionId)))) {
       lastObservation.current = { at: now, severity: observed, sessionId };
       const patientId = resident.id;
-      void fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      sendObservation({ patientId, captureId: trigger?.requestId, generation: generation.current, recovery, body: {
         source: "live_camera", sessionId, residentId: patientId, poseFrames: frames.current,
-        videoTime: time, aspect, safeZone, sourceEventId: crypto.randomUUID(), detectedAt: new Date(now).toISOString(),
-      }), signal: AbortSignal.timeout(10000) }).then(async response => {
-        const body = await response.json();
-        if (!response.ok) throw new Error();
-        if (patientId === residentIdRef.current) { if (body.event) upsertEvent(body.event); setPersistenceError(null); }
-      }).catch(() => { if (patientId === residentIdRef.current) setPersistenceError("Observation not saved. Remote notification is unavailable or unconfirmed."); })
-        .finally(() => { pending.current = false; });
+        videoTime: time, aspect, safeZone, sourceEventId: trigger?.requestId ?? crypto.randomUUID(), detectedAt: trigger?.detectedAt ?? new Date(now).toISOString(),
+      } });
     }
-  }, [resident, safeZone, sessionId, upsertEvent, isPaused]);
+  }, [resident, safeZone, sessionId, sendObservation, isPaused]);
 
   const refreshHistory = useCallback(async () => {
     if (!resident) return;
@@ -164,7 +207,7 @@ export function useResidentMonitor(
     eventType: SafetyEvent["eventType"] = "possible_fall",
     severity: SafetyEvent["severity"] = "urgent"
   ) => {
-    if (!resident) return;
+    if (!resident || isPaused || !sessionId) return;
     const demoSignals: SafetySignals = {
       isLyingDown: severity === "urgent" && eventType === "possible_fall",
       movementScore: eventType === "seizure_like_motion" ? 0.9 : 0.05,
@@ -179,33 +222,14 @@ export function useResidentMonitor(
       severity, eventType, confidence: 0.88,
       reason: `[Demo] ${eventType.replace(/_/g, " ")} simulated via demo trigger`,
     };
-    void saveEvent(resident, demoClassification, demoSignals);
+    const trigger = { requestId: crypto.randomUUID(), residentId: resident.id, detectedAt: new Date().toISOString() };
+    if (severity === "urgent" && resident.monitoringConfig?.recordingEnabled !== false) captureCallbacks.current.onCriticalCapture?.(trigger);
+    sendObservation({ endpoint: "/api/events", patientId: resident.id, captureId: trigger.requestId, generation: generation.current, body: {
+      source: "manual", manualTrigger: true, detectedAt: trigger.detectedAt, sessionId, idempotencyKey: trigger.requestId,
+      residentId: resident.id, residentName: resident.name, room: resident.room, ...demoClassification, signals: demoSignals,
+    } });
     setState(prev => ({ ...prev, classification: demoClassification }));
-  }, [resident, saveEvent]);
+  }, [resident, sendObservation, isPaused, sessionId]);
 
   return { ...state, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent };
-}
-
-// Only show persisted events in the actionable timeline so IDs match the API.
-async function persistEvent(
-  resident: ResidentProfile,
-  classification: SafetyClassification,
-  signals: SafetySignals,
-  sessionId?: string | null
-): Promise<SafetyEvent> {
-  const response = await fetch("/api/events", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      source: classification.reason.startsWith("[Demo]") ? "manual" : "live_camera",
-      manualTrigger: classification.reason.startsWith("[Demo]"),
-      detectedAt: new Date().toISOString(),
-      sessionId, idempotencyKey: crypto.randomUUID(),
-      residentId: resident.id, residentName: resident.name, room: resident.room,
-      ...classification,
-      signals,
-    }),
-  });
-  if (!response.ok) throw new Error("Could not save event");
-  return response.json();
 }

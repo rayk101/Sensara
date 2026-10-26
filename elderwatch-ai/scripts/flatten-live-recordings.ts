@@ -8,6 +8,7 @@ import { getDb, getMongoClient } from "../src/lib/mongodb";
 import { getS3Bucket, getS3Client } from "../src/lib/s3";
 import { clipObjectKey } from "../src/lib/clipPolicy";
 import { readVoiceAssetAudio, type VoiceAsset } from "../src/lib/platform/voice";
+import { assignLiveDetectionNumber, previewLiveDetectionNumbers } from "../src/lib/platform/liveDetectionNumbers";
 import type { SafetyEvent } from "../src/lib/types";
 
 const apply = process.argv.includes("--apply");
@@ -23,12 +24,13 @@ async function main() {
   if (intents.some(i => i.status === "pending" && Date.parse(i.expiresAt) > Date.now())) throw new Error("A live recording is still uploading; retry after completion");
   const voices = await db.collection<VoiceAsset>("voice_assets").find({ s3Key: { $exists: true } }).toArray();
   const demoBefore = BSON.EJSON.stringify(await db.collection("video_clips").find({ s3Key: /^critical-events\/demo\// }).sort({ _id: 1 }).toArray());
+  const preview = await previewLiveDetectionNumbers(events.filter(event => clips.some(clip => clip.eventId === String(event._id)))
+    .map(event => ({ ...event, _id: String(event._id) }) as unknown as SafetyEvent));
   const plan = clips.map(clip => {
-    const record = events.find(e => String(e._id) === clip.eventId)!;
-    const event = { ...record, _id: String(record._id) } as unknown as SafetyEvent;
+    const event = preview.find(event => event._id === clip.eventId)!;
     if (clip.bucket !== bucket || !clip.hasEmbeddedVoice || !String(clip.s3Key).startsWith("critical-events/")) throw new Error(`Review incomplete clip ${clip._id} before moving`);
-    return { clip, newKey: clipObjectKey(event, clip.contentType.includes("mp4") ? "mp4" : "webm") };
-  });
+    return { clip, event, newKey: clipObjectKey(event, clip.contentType.includes("mp4") ? "mp4" : "webm") };
+  }).sort((a, b) => preview.indexOf(a.event) - preview.indexOf(b.event));
   console.log(JSON.stringify({ mode: apply ? "apply" : "dry-run", clips: plan.map(p => ({ id: String(p.clip._id), oldKey: p.clip.s3Key, newKey: p.newKey })), legacyVoiceFiles: voices.length }, null, 2));
   if (!apply) return;
   if (!directory) throw new Error("--directory is required for backups");
@@ -37,7 +39,9 @@ async function main() {
     .catch(error => { if (error.code !== "EEXIST") throw error; });
   const manifest: Array<Record<string, unknown>> = await readFile(join(directory, "verified-moves.json"), "utf8")
     .then(text => JSON.parse(text)).catch(error => { if (error.code === "ENOENT") return []; throw error; });
-  for (const { clip, newKey } of plan) {
+  for (const { clip, event } of plan) {
+    const numbered = await assignLiveDetectionNumber(event);
+    const newKey = clipObjectKey(numbered, clip.contentType.includes("mp4") ? "mp4" : "webm");
     if (clip.s3Key === newKey) continue;
     const original = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: clip.s3Key }));
     if (!original.Body) throw new Error("Original clip missing");

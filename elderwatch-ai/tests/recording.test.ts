@@ -68,19 +68,79 @@ function setup(configured: boolean, completionDrops = 0, includeSourceAudio = fa
 
 const event = (): SafetyEvent => ({ ...generateMockEvents()[0], _id: "recording-event", createdAt: new Date().toISOString(), acknowledged: false });
 
+test("local Critical starts synchronously despite storage and persistence latency, then saves those same15seconds", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const env = setup(true, 0, true);
+  const apiFetch = globalThis.fetch;
+  let finishStorage!: (response: Response) => void;
+  globalThis.fetch = ((url: string, init?: RequestInit) => url.endsWith("presign-upload") && !init?.method
+    ? new Promise<Response>(resolve => { finishStorage = resolve; }) : apiFetch(url, init)) as typeof fetch;
+  let renderer: ReactTestRenderer | undefined, recording!: ReturnType<typeof useVideoRecorder>;
+  function Probe() { recording = useVideoRecorder(env.stream, null, null, false, () => {}, "live_camera"); return null; }
+  try {
+    await act(async () => { renderer = create(createElement(Probe)); });
+    const trigger = { requestId: "immediate", residentId: event().residentId, detectedAt: new Date().toISOString() };
+    await act(async () => {
+      recording.beginLiveCapture(trigger);
+      assert.equal(env.recorders[0]?.state, "recording", "No Promise or request precedes MediaRecorder.start");
+    });
+    await act(async () => { t.mock.timers.tick(15000); });
+    assert.equal(env.recorders[0].state, "inactive");
+    assert.equal(env.requests.filter(r => r.url === "/api/video-clips").length, 0, "Unconfirmed captures never upload");
+    await act(async () => {
+      t.mock.timers.tick(5000);
+      finishStorage(Response.json({ s3Configured: true }));
+      recording.bindLiveCapture(trigger.requestId, { ...event(), criticalDetectedAt: trigger.detectedAt });
+    });
+    const saved = env.requests.find(r => r.url === "/api/video-clips")?.body;
+    assert.equal(saved?.clipStartTime, trigger.detectedAt);
+    assert.equal(saved?.clipEndTime, new Date(Date.parse(trigger.detectedAt) + 15000).toISOString());
+    assert.equal(saved?.hasAudioTrack, true);
+    assert.equal(recording.recordingStatus, "saved");
+    assert.equal(env.recorders.length, 1);
+  } finally { await act(async () => renderer?.unmount()); env.restore(); }
+});
+
+test("rejected or interrupted local captures cannot upload after a late server response", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const env = setup(true);
+  let renderer: ReactTestRenderer | undefined, recording!: ReturnType<typeof useVideoRecorder>;
+  function Probe({ paused }: { paused: boolean }) { recording = useVideoRecorder(env.stream, null, null, paused, () => {}, "live_camera"); return null; }
+  try {
+    await act(async () => { renderer = create(createElement(Probe, { paused: false })); });
+    const trigger = { requestId: "reject", residentId: event().residentId, detectedAt: new Date().toISOString() };
+    await act(async () => { recording.beginLiveCapture(trigger); recording.bindLiveCapture(trigger.requestId, null); });
+    assert.equal(env.recorders[0].state, "inactive");
+    await act(async () => {
+      recording.beginLiveCapture({ ...trigger, requestId: "pause" });
+      renderer!.update(createElement(Probe, { paused: true }));
+    });
+    await act(async () => { t.mock.timers.tick(20000); recording.bindLiveCapture("pause", event()); });
+    assert.ok(env.recorders.every(recorder => recorder.state === "inactive"));
+    assert.equal(env.requests.filter(r => r.url === "https://example.invalid/upload").length, 0);
+    assert.equal(env.cameraTrack.readyState, "live");
+  } finally { await act(async () => renderer?.unmount()); env.restore(); }
+});
+
 test("the live camera recorder ignores demo and unrelated manual incidents", async () => {
   const env = setup(true);
   let renderer: ReactTestRenderer | undefined;
+  let recording!: ReturnType<typeof useVideoRecorder>;
   function Probe({ current }: { current: SafetyEvent }) {
-    useVideoRecorder(env.stream, current, null, false, () => {}, "live_camera");
+    recording = useVideoRecorder(env.stream, current, null, false, () => {}, "live_camera");
     return null;
   }
   try {
     await act(async () => { renderer = create(createElement(Probe, { current: { ...event(), source: "multi_feed_demo" } })); });
     await act(async () => renderer!.update(createElement(Probe, { current: { ...event(), _id: "unrelated", source: "manual" } })));
     assert.equal(env.recorders.length, 0);
-    assert.equal(env.requests.length, 0);
-    await act(async () => renderer!.update(createElement(Probe, { current: { ...event(), _id: "live-button", source: "manual", sessionId: "camera-session", recordingSource: "live_camera" } })));
+    assert.ok(env.requests.every(request => request.url.endsWith("presign-upload") && !request.body));
+    const manual: SafetyEvent = { ...event(), _id: "live-button", source: "manual", sessionId: "camera-session", recordingSource: "live_camera" };
+    await act(async () => {
+      recording.beginLiveCapture({ requestId: "local-button", residentId: manual.residentId, detectedAt: new Date().toISOString() });
+      recording.bindLiveCapture("local-button", manual);
+      renderer!.update(createElement(Probe, { current: manual }));
+    });
     assert.equal(env.recorders.length, 1);
   } finally { await act(async () => renderer?.unmount()); env.restore(); }
 });

@@ -91,6 +91,7 @@ export interface SafetyEvent {
   activeEpisodeKey?: string;
   correlationId?: string;
   detectedAt?: string;
+  criticalDetectedAt?: string;
   firstUrgentAt?: string | null;
   lastUrgentAt?: string | null;
   recurrenceOf?: string;
@@ -116,6 +117,7 @@ export interface SafetyEvent {
   source: "live_camera" | "audio_monitor" | "manual" | "multi_feed_demo";
   // Set by the server from the monitoring session, never from an upload request.
   recordingSource?: "live_camera" | "multi_feed_demo";
+  liveDetectionNumber?: number;
   audioTranscript?: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;
@@ -148,7 +150,7 @@ export interface VideoClip {
   uploadStatus?: "pending" | "uploaded" | "failed";
   uploadedAt?: string;
   expiresAt?: string;
-  footageType?: "post-event";
+  footageType?: "post-event" | "from-critical-alert";
   residentId: string;
   residentName: string;
   room: string;

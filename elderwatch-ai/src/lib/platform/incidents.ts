@@ -121,6 +121,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     signals, source: source as SafetyEvent["source"], ...(recordingSource ? { recordingSource } : {}), sessionId, idempotencyKey, status: "open", initialStatus: "open",
     version: 1, episodeId: randomUUID(), activeEpisodeKey, sourceEventId: requestId, correlationId: randomUUID(), detectedAt,
     firstUrgentAt: urgent ? now : null, lastUrgentAt: urgent ? detectedAt : null,
+    ...(urgent ? { criticalDetectedAt: detectedAt } : {}),
     workflow: {
       video: { status: urgent && recordingSource && settings.recordingEnabled && patient.monitoringConfig?.recordingEnabled !== false ? "requested" : "not_requested", updatedAt: now },
       voice: { status: urgent && settings.voiceEnabled ? "queued" : "not_requested", updatedAt: now },
@@ -135,7 +136,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     if (!urgent) return {};
     if (prior.firstUrgentAt) return { lastUrgentAt: detectedAt };
     return { severity: "urgent", eventType: event.eventType, confidence: event.confidence, reason: event.reason,
-      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, source: event.source, ...(event.recordingSource ? { recordingSource: event.recordingSource } : {}), sessionId: event.sessionId, firstUrgentAt: now, lastUrgentAt: detectedAt, workflow: event.workflow, notificationsQueued: false };
+      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, source: event.source, ...(event.recordingSource ? { recordingSource: event.recordingSource } : {}), sessionId: event.sessionId, firstUrgentAt: now, criticalDetectedAt: detectedAt, lastUrgentAt: detectedAt, workflow: event.workflow, notificationsQueued: false };
   };
   if (!isMongoEnabled()) {
     const ingestion = memory("event_ingestions").get(idempotencyKey);

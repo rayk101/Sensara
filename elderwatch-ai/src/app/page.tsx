@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import PoseCamera from "@/components/PoseCamera";
 import { MOCK_RESIDENTS } from "@/lib/mockData";
@@ -12,7 +12,7 @@ import { useMonitoringSession } from "@/hooks/useMonitoringSession";
 import Administration from "@/components/Administration";
 import IncidentCenter from "@/components/IncidentCenter";
 import SignIn from "@/components/SignIn";
-import { useVideoRecorder } from "@/hooks/useVideoRecorder";
+import { useVideoRecorder, type LiveCaptureTrigger } from "@/hooks/useVideoRecorder";
 import RecordingNotice from "@/components/RecordingNotice";
 import ResidentCard from "@/components/ResidentCard";
 import EventTimeline from "@/components/EventTimeline";
@@ -114,10 +114,13 @@ export default function Dashboard() {
   const monitoringRequested = !isPaused && monitoringConsent && mainTab === "live-camera";
   const { sessionId, sessionError } = useMonitoringSession(selectedResident?.id, monitoringRequested, "live_camera", cameraId || "default-camera", cameraAttempt);
   const monitoringPaused = !monitoringRequested;
+  const liveCapture = useRef<Pick<ReturnType<typeof useVideoRecorder>, "beginLiveCapture" | "bindLiveCapture"> | null>(null);
+  const onCriticalCapture = useCallback((trigger: LiveCaptureTrigger) => liveCapture.current?.beginLiveCapture(trigger), []);
+  const onCriticalPersisted = useCallback((requestId: string, event: SafetyEvent | null) => liveCapture.current?.bindLiveCapture(requestId, event), []);
   const { signals, classification, observationAvailable, diagnostics, timeline, processFrame, injectDemoEvent, upsertEvent, refreshHistory, persistenceError, latestEvent } = useResidentMonitor(
     selectedResident ?? null,
     safeZone,
-    { isPaused: monitoringPaused, seizureDetectionEnabled, sessionId }
+    { isPaused: monitoringPaused, seizureDetectionEnabled, sessionId, onCriticalCapture, onCriticalPersisted }
   );
 
   // Classify each frame directly so pose and monitoring state render together.
@@ -147,7 +150,7 @@ export default function Dashboard() {
   }, [stream]);
 
   // ── Critical event video recording (shared function for all triggers) ─────
-  const { recordingStatus, statusMessage: recordingMessage } = useVideoRecorder(
+  const { recordingStatus, statusMessage: recordingMessage, beginLiveCapture, bindLiveCapture } = useVideoRecorder(
     stream,
     latestEvent,
     micStream,
@@ -155,6 +158,7 @@ export default function Dashboard() {
     upsertEvent,
     "live_camera"
   );
+  useEffect(() => { liveCapture.current = { beginLiveCapture, bindLiveCapture }; }, [beginLiveCapture, bindLiveCapture]);
 
   // ── Test email alert ──────────────────────────────────────────────────────
   const handleSendTestPhoton = useCallback(async () => {

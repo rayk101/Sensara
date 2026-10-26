@@ -9,6 +9,7 @@ import { getS3Bucket, getS3Client } from "../src/lib/s3";
 import { clipObjectKey, patientFolderName } from "../src/lib/clipPolicy";
 import { renderRecordingWithVoice, inspectLocalMedia, recordingMetadata, completedRecording } from "../src/lib/platform/recordingMedia";
 import { readVoiceAssetAudio, recordingSpeech, type VoiceAsset } from "../src/lib/platform/voice";
+import { assignLiveDetectionNumber, previewLiveDetectionNumbers } from "../src/lib/platform/liveDetectionNumbers";
 import type { SafetyEvent } from "../src/lib/types";
 
 const apply = process.argv.includes("--apply");
@@ -25,13 +26,14 @@ async function main() {
   const voices = await db.collection<VoiceAsset>("voice_assets").find({}).toArray();
   const intents = await db.collection("upload_intents").find({}).toArray();
   if (intents.some(i => i.status === "pending" && Date.parse(i.expiresAt) > Date.now())) throw new Error("Wait for active recordings to finish before migrating");
+  const preview = await previewLiveDetectionNumbers(events.map(event => ({ ...event, _id: String(event._id) }) as unknown as SafetyEvent));
   const plan = clips.map(clip => {
     const record = events.find(e => String(e._id) === String(clip.eventId));
     if (!record || clip.bucket !== bucket || !String(clip.s3Key).startsWith("critical-events/")) throw new Error(`Clip ${clip._id} needs manual review before migration`);
-    const event = { ...record, _id: String(record._id) } as unknown as SafetyEvent;
+    const event = preview.find(event => event._id === String(record._id))!;
     const extension: "mp4" | "webm" = clip.contentType.startsWith("video/mp4") ? "mp4" : "webm";
     return { clip, event, extension, oldKey: String(clip.s3Key), newKey: clipObjectKey(event, extension) };
-  });
+  }).sort((a, b) => preview.indexOf(a.event) - preview.indexOf(b.event));
   console.log(JSON.stringify({ mode: apply ? "apply" : "dry-run", clips: plan.map(p => ({ id: String(p.clip._id), oldKey: p.oldKey, newKey: p.newKey })), cachedVoiceAssets: voices.length }, null, 2));
   if (!apply) return;
   if (!directory) throw new Error("--directory is required for the backup and verification manifest");
@@ -44,8 +46,8 @@ async function main() {
   await saveManifest();
 
   for (const item of plan) {
-    const { clip, event, oldKey, newKey, extension } = item;
-    if (oldKey === newKey && clip.hasEmbeddedVoice && clip.recordingFormatVersion === 2) continue;
+    const { clip, event, oldKey, newKey: plannedKey, extension } = item;
+    if (oldKey === plannedKey && clip.hasEmbeddedVoice && clip.recordingFormatVersion === 2) continue;
     if (clip.hasEmbeddedVoice) throw new Error("Already narrated recordings need flatten-live-recordings.ts; do not mix their alert twice");
     const source = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: oldKey }));
     if (!source.Body || !source.ContentLength || source.ContentLength > 50 * 1024 * 1024) throw new Error("Invalid source object");
@@ -58,6 +60,8 @@ async function main() {
     await writeFile(join(directory, `${clip._id}-alert.mp3`), audio, { mode: 0o600 });
     const rendered = await renderRecordingWithVoice(original, audio, extension, clip.recordedDurationSeconds ?? originalMedia.durationSeconds);
     const { bytes, ...newFinished } = rendered;
+    const numbered = await assignLiveDetectionNumber(event);
+    const newKey = clipObjectKey(numbered, extension);
     let finished = newFinished;
     let token: string = randomUUID();
     const sourceHash = sha(original), voiceHash = sha(audio);
