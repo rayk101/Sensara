@@ -24,6 +24,11 @@ for (const extension of ["webm", "mp4"] as const) {
       assert.equal(inspected.hasVideoTrack, true); assert.equal(inspected.hasAudioTrack, true);
       assert.ok(inspected.durationSeconds >= 3 && inspected.durationSeconds < 3.6);
       assert.equal(result.recordedDurationSeconds, 1);
+      // Audio duration alone can hide a truncated video stream on some FFmpeg
+      // versions. Decode an actual held frame after the original footage ends.
+      const lateFrame = await run(executable, ["-v", "error", "-ss", "2.5", "-i", output,
+        "-map", "0:v:0", "-frames:v", "1", "-c:v", "png", "-f", "image2pipe", "pipe:1"], { encoding: "buffer" });
+      assert.ok(lateFrame.stdout.length > 8, "The final video frame must remain available while the longer alert plays");
       const pcm = join(directory, "audio.raw");
       await run(executable, ["-v", "error", "-i", output, "-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", pcm]);
       const raw = await readFile(pcm);

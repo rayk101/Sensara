@@ -55,7 +55,9 @@ export async function renderRecordingWithVoice(video: Uint8Array, voice: Uint8Ar
       "-nostdin", "-hide_banner", "-v", "error", "-xerror", "-y",
       "-protocol_whitelist", "file,pipe", "-i", source, "-protocol_whitelist", "file,pipe", "-i", narration,
       "-filter_complex", audioFilter, "-map", "0:v:0", "-map", "[audio]",
-      "-vf", `setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, duration - recordedDurationSeconds) + 0.25}`,
+      // FFmpeg 7's setpts clears frame-rate metadata that tpad needs to
+      // calculate extra frames. Pad first, then normalize the timestamps.
+      "-vf", `tpad=stop_mode=clone:stop_duration=${Math.max(0, duration - recordedDurationSeconds) + 0.25},setpts=PTS-STARTPTS`,
       ...(extension === "webm" ? ["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-crf", "32", "-b:v", "0", "-c:a", "libopus"]
         : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart"]),
       "-threads", "2", "-b:a", "128k", "-t", duration.toFixed(3), output,
