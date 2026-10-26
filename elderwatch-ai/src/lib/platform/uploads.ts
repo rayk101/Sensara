@@ -1,5 +1,5 @@
 import { verifyUploadedMedia } from "./media";
-import { clipPolicy, clipObjectKey } from "../clipPolicy";
+import { clipPolicy, clipObjectKey, recordingSource } from "../clipPolicy";
 import { completedRecording, finishRecording } from "./recordingMedia";
 import { getResidentById } from "../db/residents";
 import { randomUUID } from "node:crypto";
@@ -24,6 +24,8 @@ export async function prepareUpload(input: Record<string, unknown>) {
   const eventId = identifier(input.eventId, "incident");
   const event = await getSafetyEvent(eventId);
   if (!event || event.residentId !== input.residentId || event.severity !== "urgent") throw new ApiError(404, "Matching urgent incident not found");
+  if (!recordingSource(event)) throw new ApiError(400, "Only incidents from a camera monitoring session can upload recordings");
+  if (event.workflow?.video.status === "removed") throw new ApiError(409, "This recording was removed");
   const settings = await getSettings();
   if (!settings.recordingEnabled || (await getResidentById(event.residentId))?.monitoringConfig?.recordingEnabled === false) throw new ApiError(409, "Recording is disabled");
   if (event.hasVideoClip) throw new ApiError(409, "Incident already has a clip");
@@ -40,7 +42,7 @@ export async function prepareUpload(input: Record<string, unknown>) {
     await col.updateOne({ eventId }, { $setOnInsert: intent }, { upsert: true });
     saved = (await col.findOne({ eventId }))!;
   }
-  if (saved.fileSize !== file.fileSize || saved.contentType !== file.contentType || saved.status !== "pending" || Date.parse(saved.expiresAt) < Date.now()) throw new ApiError(409, "Upload intent conflicts with this recording or has expired");
+  if (saved.s3Key !== intent.s3Key || saved.fileSize !== file.fileSize || saved.contentType !== file.contentType || saved.status !== "pending" || Date.parse(saved.expiresAt) < Date.now()) throw new ApiError(409, "Upload intent conflicts with this recording or has expired");
   return { uploadId: saved.id, s3Key: saved.s3Key, bucket: saved.bucket,
     uploadUrl: await createPresignedUploadUrl({ key: saved.s3Key, contentType: saved.contentType, fileSize: saved.fileSize }),
     headers: { "Content-Type": saved.contentType, "If-None-Match": "*" } };
@@ -54,10 +56,13 @@ export async function completeUpload(input: Record<string, unknown>, inspect: (k
   const event = await getSafetyEvent(intent.eventId);
   if (!event) throw new ApiError(404, "Incident not found");
   if (intent.clipId) return { ...await getVideoClipById(intent.clipId), event };
+  const source = recordingSource(event);
+  if (!source) throw new ApiError(400, "Only incidents from a camera monitoring session can upload recordings");
+  if (intent.s3Key !== clipObjectKey(event, intent.contentType.startsWith("video/mp4") ? "mp4" : "webm")) throw new ApiError(409, "Recording destination does not match its camera source");
   if (Date.parse(intent.expiresAt) < Date.now()) throw new ApiError(409, "Upload verification expired");
   const start = isoTime(input.clipStartTime), end = isoTime(input.clipEndTime);
   const duration = (Date.parse(end) - Date.parse(start)) / 1000;
-  const policy = clipPolicy(event.source);
+  const policy = clipPolicy(source);
   if (duration < policy.minSeconds || duration > policy.maxSeconds || Date.parse(start) < Date.parse(event.firstUrgentAt ?? event.createdAt) - 1000 || Date.parse(end) > Date.now() + 10_000) throw new ApiError(400, `Expected approximately ${policy.seconds} seconds of post-event footage`);
   // Older, still-pending captures can finish after a deploy without losing their identity.
   if (!intent.processingToken) {

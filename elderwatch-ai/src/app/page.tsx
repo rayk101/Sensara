@@ -152,7 +152,8 @@ export default function Dashboard() {
     latestEvent,
     micStream,
     monitoringPaused,
-    upsertEvent
+    upsertEvent,
+    "live_camera"
   );
 
   // ── Test email alert ──────────────────────────────────────────────────────

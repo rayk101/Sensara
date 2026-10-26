@@ -181,6 +181,8 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       assert.ok(saved.videoClip!.durationSeconds >= 9);
       assert.ok(Math.abs(saved.videoClip!.recordedDurationSeconds! - seconds) < .2);
       assert.equal(saved.videoClip!.hasEmbeddedVoice, true);
+      assert.ok(saved.videoClip!.s3Key.startsWith(source === "multi_feed_demo" ? "critical-events/demo/residents/" : "critical-events/live-camera/"));
+      if (source === "live_camera") assert.equal(saved.videoClip!.s3Key.split("/").length, 3);
       assert.ok(saved.videoClip!.fileName!.startsWith(source === "multi_feed_demo" ? "eleanor-brooks-" : "robert-hayes-"));
       const listed = await clips(new Request(`http://localhost/api/video-clips?residentId=${residentId}`));
       assert.ok((await listed.json()).clips.some((clip: { _id: string }) => clip._id === saved.videoClipId));

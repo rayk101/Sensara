@@ -15,16 +15,17 @@ test("critical clip names identify each demo patient and the live feed", () => {
     const fileName = clipFileName({ ...base, source: "multi_feed_demo", residentName: name }, "mp4");
     assert.equal(fileName, `${name.toLowerCase().replace(/ /g, "-")}-2026-10-23T10-20-30-000Z.mp4`);
   }
-  assert.match(clipFileName({ ...base, source: "live_camera" }, "webm"), /-2026-10-23T10-20-30-000Z.webm$/);
+  assert.match(clipFileName({ ...base, source: "live_camera" }, "webm"), /-2026-10-23T10-20-30-000Z--[^/]+\.webm$/);
   assert.ok(!clipFileName({ ...base, source: "multi_feed_demo", residentName: "../Bad/name" }, "mp4").includes("/"));
 });
 
-test("recordings separate live and demo, name patients, and isolate namesakes", () => {
+test("live recordings are flat and unique while demo folders stay unchanged", () => {
   const base = { ...generateMockEvents()[0], _id: "incident-one", residentName: "Eleanor Brooks" };
   const key = clipObjectKey({ ...base, source: "live_camera" }, "mp4");
-  assert.match(key, /^critical-events\/live-camera\/residents\/eleanor-brooks--resident_001\/incident-one\//);
-  assert.match(clipObjectKey({ ...base, source: "multi_feed_demo" }, "mp4"), /^critical-events\/demo\/residents\//);
-  assert.notEqual(key, clipObjectKey({ ...base, residentId: "resident_002", source: "live_camera" }, "mp4"));
+  assert.match(key, /^critical-events\/live-camera\/eleanor-brooks-[^/]+--incident-one\.mp4$/);
+  assert.equal(key.split("/").length, 3);
+  assert.equal(clipObjectKey({ ...base, source: "multi_feed_demo" }, "mp4"), `critical-events/demo/residents/eleanor-brooks--resident_001/incident-one/${clipFileName({ ...base, source: "multi_feed_demo" }, "mp4")}`);
+  assert.notEqual(key, clipObjectKey({ ...base, _id: "incident-two", residentId: "resident_002", source: "live_camera" }, "mp4"));
   assert.throws(() => clipObjectKey({ ...base, _id: "../other" }, "mp4"));
 });
 

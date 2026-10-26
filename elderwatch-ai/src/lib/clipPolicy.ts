@@ -1,5 +1,11 @@
 import type { SafetyEvent } from "./types";
 
+export function recordingSource(event: SafetyEvent): SafetyEvent["recordingSource"] {
+  if (event.source === "live_camera" || event.source === "multi_feed_demo") return event.source;
+  if (event.source === "manual" && event.sessionId) return event.recordingSource;
+  return undefined;
+}
+
 // The saved incident chooses the policy; upload clients cannot choose a shorter clip.
 export function clipPolicy(source: SafetyEvent["source"]) {
   return source === "multi_feed_demo"
@@ -9,7 +15,8 @@ export function clipPolicy(source: SafetyEvent["source"]) {
 
 export function clipFileName(event: SafetyEvent, extension: "mp4" | "webm") {
   const timestamp = new Date(event.firstUrgentAt ?? event.createdAt).toISOString().replace(/[:.]/g, "-");
-  return `${patientFolderName(event.residentName)}-${timestamp}.${extension}`;
+  const incident = recordingSource(event) === "multi_feed_demo" ? "" : `--${event._id}`;
+  return `${patientFolderName(event.residentName)}-${timestamp}${incident}.${extension}`;
 }
 
 export function patientFolderName(name: string) {
@@ -19,7 +26,9 @@ export function patientFolderName(name: string) {
 
 export function clipObjectKey(event: SafetyEvent, extension: "mp4" | "webm") {
   if (!event._id || !/^[a-zA-Z0-9_-]+$/.test(String(event._id)) || !/^[a-zA-Z0-9_-]+$/.test(event.residentId)) throw new Error("Invalid recording identity");
-  const source = event.source === "multi_feed_demo" ? "demo" : "live-camera";
+  const source = recordingSource(event);
+  if (!source) throw new Error("A camera recording source is required");
+  if (source === "live_camera") return `critical-events/live-camera/${clipFileName(event, extension)}`;
   // Keep the stable patient ID as well as the readable name, so namesakes cannot collide.
-  return `critical-events/${source}/residents/${patientFolderName(event.residentName)}--${event.residentId}/${event._id}/${clipFileName(event, extension)}`;
+  return `critical-events/demo/residents/${patientFolderName(event.residentName)}--${event.residentId}/${event._id}/${clipFileName(event, extension)}`;
 }

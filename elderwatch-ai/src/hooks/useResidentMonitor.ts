@@ -198,6 +198,7 @@ async function persistEvent(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source: classification.reason.startsWith("[Demo]") ? "manual" : "live_camera",
+      manualTrigger: classification.reason.startsWith("[Demo]"),
       detectedAt: new Date().toISOString(),
       sessionId, idempotencyKey: crypto.randomUUID(),
       residentId: resident.id, residentName: resident.name, room: resident.room,

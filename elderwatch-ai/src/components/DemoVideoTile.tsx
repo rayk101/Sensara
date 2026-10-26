@@ -74,7 +74,7 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  const recording = useVideoRecorder(capturedStream, savedEvent, null, isPaused, setSavedEvent);
+  const recording = useVideoRecorder(capturedStream, savedEvent, null, isPaused, setSavedEvent, "multi_feed_demo");
   useEffect(() => {
     const video = videoRef.current as (HTMLVideoElement & { captureStream?: () => MediaStream }) | null;
     if (isPaused || !video || !sessionId) { setCapturedStream(null); return; }

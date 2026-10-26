@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
-import { clipPolicy } from "@/lib/clipPolicy";
+import { clipPolicy, recordingSource } from "@/lib/clipPolicy";
 import { recordingAudio } from "@/lib/recordingAudio";
 export type RecordingStatus = "idle" | "preparing" | "capturing" | "uploading" | "saved" | "error" | "s3-disabled";
 // The browser owns capture. Up to three independent urgent incidents may share
 // a camera stream; each retains its own immutable patient/incident snapshot.
-export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent | null, micStream: MediaStream | null, isPaused: boolean, onSaved: (event: SafetyEvent) => void) {
+export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent | null, micStream: MediaStream | null, isPaused: boolean, onSaved: (event: SafetyEvent) => void, expectedSource?: SafetyEvent["recordingSource"]) {
   const [recordingStatus, setStatus] = useState<RecordingStatus>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const handled = useRef(new Set<string>());
@@ -22,9 +22,11 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
   const videoStatus = event?.workflow?.video.status;
   useEffect(() => {
     const captured = current.current.event;
-    if (!stream || isPaused || !captured || !eventId || captured.severity !== "urgent" || (captured.workflow && captured.workflow.video.status === "not_requested") || captured.hasVideoClip || handled.current.has(eventId)) return;
+    if (!stream || isPaused || !captured || !eventId || captured.severity !== "urgent" || (captured.workflow && ["not_requested", "removed"].includes(captured.workflow.video.status)) || captured.hasVideoClip || handled.current.has(eventId)) return;
+    const source = recordingSource(captured);
+    if (!source || (expectedSource && source !== expectedSource)) return;
     handled.current.add(eventId);
-    const policy = clipPolicy(captured.source);
+    const policy = clipPolicy(source);
     const report = (status: string, error?: string) => fetch(`/api/events/${eventId}/capture`, { method: "PATCH", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, error }) }).catch(() => {});
     if (Date.now() - Date.parse(captured.firstUrgentAt ?? captured.createdAt) > 30_000 || jobs.current.size >= 3) {
       setStatus("error"); setStatusMessage(jobs.current.size >= 3
@@ -117,6 +119,6 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
       } finally { finish(); }
     };
     void run();
-  }, [stream, eventId, severity, videoStatus, isPaused]);
+  }, [stream, eventId, severity, videoStatus, isPaused, expectedSource]);
   return { recordingStatus, statusMessage };
 }

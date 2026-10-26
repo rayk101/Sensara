@@ -68,6 +68,23 @@ function setup(configured: boolean, completionDrops = 0, includeSourceAudio = fa
 
 const event = (): SafetyEvent => ({ ...generateMockEvents()[0], _id: "recording-event", createdAt: new Date().toISOString(), acknowledged: false });
 
+test("the live camera recorder ignores demo and unrelated manual incidents", async () => {
+  const env = setup(true);
+  let renderer: ReactTestRenderer | undefined;
+  function Probe({ current }: { current: SafetyEvent }) {
+    useVideoRecorder(env.stream, current, null, false, () => {}, "live_camera");
+    return null;
+  }
+  try {
+    await act(async () => { renderer = create(createElement(Probe, { current: { ...event(), source: "multi_feed_demo" } })); });
+    await act(async () => renderer!.update(createElement(Probe, { current: { ...event(), _id: "unrelated", source: "manual" } })));
+    assert.equal(env.recorders.length, 0);
+    assert.equal(env.requests.length, 0);
+    await act(async () => renderer!.update(createElement(Probe, { current: { ...event(), _id: "live-button", source: "manual", sessionId: "camera-session", recordingSource: "live_camera" } })));
+    assert.equal(env.recorders.length, 1);
+  } finally { await act(async () => renderer?.unmount()); env.restore(); }
+});
+
 test("recording keeps audio from the source video without opening a microphone", async t => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
   const env = setup(true, 0, true);

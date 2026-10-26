@@ -13,6 +13,7 @@ import { getInMemoryStore } from "../mockData";
 import { analyzePoseWindow, validatePoseFrames } from "../poseEvidence";
 import { memory } from "./store";
 import { ObjectId } from "mongodb";
+import { recordingSource as eventRecordingSource } from "../clipPolicy";
 export function episodeCategory(type: string) { return ["possible_fall", "fall_risk", "unsafe_posture"].includes(type) ? "fall" : type; }
 const locks = new Map<string, Promise<unknown>>();
 export async function submitIncident(input: Record<string, unknown>): Promise<SafetyEvent> {
@@ -61,11 +62,13 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const source = input.source ?? "live_camera";
   if (!["live_camera", "audio_monitor", "manual", "multi_feed_demo"].includes(String(source))) throw new ApiError(400, "Invalid incident source");
   const sessionId = input.sessionId ? identifier(input.sessionId, "session") : null;
+  let recordingSource: SafetyEvent["recordingSource"];
   if (sessionId) {
     const session = await getSession(sessionId);
     if (!session || session.residentId !== residentId || session.status !== "active" || Date.parse(session.lastSeenAt) < Date.now() - 90_000) throw new ApiError(409, "Monitoring session is not active for this patient");
     if (session.staffId !== currentActor().id && currentActor().role !== "admin") throw new ApiError(403, "Session belongs to another user");
     if ((source === "live_camera" && session.source !== "live_camera") || (source === "multi_feed_demo" && (session.source !== "multi_feed_demo" || session.deviceId !== input.scenarioId))) throw new ApiError(400, "Monitoring source mismatch");
+    if (source !== "audio_monitor") recordingSource = session.source;
   } else if (source === "live_camera" || source === "multi_feed_demo") throw new ApiError(400, "An active monitoring session is required");
   const signals = (input.signals ?? { isLyingDown: false, movementScore: 0, postureAngle: 0, secondsStill: 0, insideSafeZone: true, visible: false }) as SafetySignals;
   if (!signals || typeof signals !== "object" || ["isLyingDown", "insideSafeZone", "visible"].some(key => typeof (signals as unknown as Record<string, unknown>)[key] !== "boolean") || [signals.movementScore, signals.postureAngle, signals.secondsStill].some(n => typeof n !== "number" || !Number.isFinite(n) || n < 0)) throw new ApiError(400, "Invalid safety signals");
@@ -78,7 +81,11 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
   const settings = await getSettings();
   const recipients = (await getCaregivers()).filter(r => r.active && r.urgentAlerts && r.patientIds.includes(residentId)).map(r => r.id);
   const urgent = input.severity === "urgent";
-  const activeEpisodeKey = `${residentId}:${episodeCategory(String(input.eventType))}`;
+  const episodePrefix = `${residentId}:${episodeCategory(String(input.eventType))}`;
+  const origin = recordingSource ?? String(source);
+  const activeEpisodeKey = `${episodePrefix}:${origin}`;
+  const sameOrigin = (prior: SafetyEvent) => (eventRecordingSource(prior) ?? prior.source) === origin;
+  const originFilter = { $or: [{ recordingSource: origin }, { recordingSource: null, source: origin }] };
   const idempotencyKey = createHash("sha256").update(`${residentId}:${sessionId ?? "manual"}:${requestId}`).digest("hex");
   const now = new Date().toISOString();
   const observed = (source === "live_camera" || source === "multi_feed_demo") && input.available !== true ? "unknown" : String(input.severity);
@@ -94,6 +101,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     return { id: residentId, sessionId, detectedAt, severity, normalSince, nonUrgentSince };
   };
   const newOccurrence = (prior: SafetyEvent, latest: Record<string, unknown> | null | undefined) => {
+    if (urgent && prior.firstUrgentAt && source === "manual" && recordingSource && input.manualTrigger === true) return true;
     if (!urgent || !prior.firstUrgentAt || !["live_camera", "multi_feed_demo"].includes(String(source))) return false;
     const lastUrgent = Date.parse(prior.lastUrgentAt ?? prior.firstUrgentAt);
     const recovered = latest?.sessionId === sessionId && typeof latest.nonUrgentSince === "string" && typeof latest.detectedAt === "string"
@@ -110,11 +118,11 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     eventType: input.eventType as SafetyEvent["eventType"], severity: input.severity as SafetyEvent["severity"], confidence: input.confidence,
     reason: text(input.reason, "reason", 2000), recommendedAction: RECOMMENDED_ACTIONS[String(input.eventType)] ?? "Check the resident and follow facility response procedures.",
     ...(["multi_feed_demo", "live_camera"].includes(String(source)) ? { detectionMethod: "mediapipe_pose_v1" as const } : {}),
-    signals, source: source as SafetyEvent["source"], sessionId, idempotencyKey, status: "open", initialStatus: "open",
+    signals, source: source as SafetyEvent["source"], ...(recordingSource ? { recordingSource } : {}), sessionId, idempotencyKey, status: "open", initialStatus: "open",
     version: 1, episodeId: randomUUID(), activeEpisodeKey, sourceEventId: requestId, correlationId: randomUUID(), detectedAt,
     firstUrgentAt: urgent ? now : null, lastUrgentAt: urgent ? detectedAt : null,
     workflow: {
-      video: { status: urgent && settings.recordingEnabled && patient.monitoringConfig?.recordingEnabled !== false ? "requested" : "not_requested", updatedAt: now },
+      video: { status: urgent && recordingSource && settings.recordingEnabled && patient.monitoringConfig?.recordingEnabled !== false ? "requested" : "not_requested", updatedAt: now },
       voice: { status: urgent && settings.voiceEnabled ? "queued" : "not_requested", updatedAt: now },
       messaging: { status: !urgent || !settings.notificationsEnabled ? "disabled" : recipients.length ? "queued" : "configuration_failed", recipientIds: recipients, updatedAt: now },
       dashboard: { status: "available", updatedAt: now },
@@ -127,7 +135,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
     if (!urgent) return {};
     if (prior.firstUrgentAt) return { lastUrgentAt: detectedAt };
     return { severity: "urgent", eventType: event.eventType, confidence: event.confidence, reason: event.reason,
-      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, source: event.source, sessionId: event.sessionId, firstUrgentAt: now, lastUrgentAt: detectedAt, workflow: event.workflow, notificationsQueued: false };
+      recommendedAction: event.recommendedAction, detectionMethod: event.detectionMethod, signals: event.signals, source: event.source, ...(event.recordingSource ? { recordingSource: event.recordingSource } : {}), sessionId: event.sessionId, firstUrgentAt: now, lastUrgentAt: detectedAt, workflow: event.workflow, notificationsQueued: false };
   };
   if (!isMongoEnabled()) {
     const ingestion = memory("event_ingestions").get(idempotencyKey);
@@ -139,7 +147,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
       memory("event_ingestions").set(idempotencyKey, { id: idempotencyKey, incidentId: null });
       return null;
     }
-    let prior = getInMemoryStore().getRecentEvents(100000).find(e => e.activeEpisodeKey === activeEpisodeKey || e.activeEpisodeKey?.startsWith(`${activeEpisodeKey}:`));
+    let prior = getInMemoryStore().getRecentEvents(100000).find(e => sameOrigin(e) && (e.activeEpisodeKey === episodePrefix || e.activeEpisodeKey?.startsWith(`${episodePrefix}:`)));
     if (prior && newOccurrence(prior, latest)) {
       event.recurrenceOf = prior._id;
       event.activeEpisodeKey = `${activeEpisodeKey}:${event.episodeId}`;
@@ -147,7 +155,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
       prior.version = (prior.version ?? 0) + 1;
       prior = undefined;
     }
-    const closed = getInMemoryStore().getRecentEvents(100000).find(e => e.residentId === residentId && episodeCategory(e.eventType) === episodeCategory(event.eventType) && e.resolvedAt && (e.resolvedAt >= detectedAt || !rearmed(latest, e.resolvedAt)));
+    const closed = getInMemoryStore().getRecentEvents(100000).find(e => sameOrigin(e) && e.residentId === residentId && episodeCategory(e.eventType) === episodeCategory(event.eventType) && e.resolvedAt && (e.resolvedAt >= detectedAt || !rearmed(latest, e.resolvedAt)));
     if (closed && !prior && !event.recurrenceOf) throw new ApiError(409, "Delayed observation for a closed episode");
     let saved: SafetyEvent;
     if (prior) { const update = merge(prior); if (Object.keys(update).length) { const promoted = !prior.firstUrgentAt; Object.assign(prior, update); prior.version = (prior.version ?? 0) + 1; if (promoted) prior.stateHistory?.push({ status: "urgent", at: now, by: currentActor().id }); } saved = prior; }
@@ -180,7 +188,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
         return null;
       }
       const col = db.collection("safety_events");
-      let prior = await col.findOne({ residentId, activeEpisodeKey: { $regex: `^${activeEpisodeKey}(?::|$)` } }, { session });
+      let prior = await col.findOne({ residentId, ...originFilter, activeEpisodeKey: { $regex: `^${episodePrefix}(?::|$)` } }, { session });
       if (prior && newOccurrence(prior as unknown as SafetyEvent, latest)) {
         event.recurrenceOf = prior._id.toString();
         // A new key also avoids recycling a unique-index value inside a transaction.
@@ -188,7 +196,7 @@ async function ingestIncident(input: Record<string, unknown>): Promise<SafetyEve
         await col.updateOne({ _id: prior._id }, { $unset: { activeEpisodeKey: "" }, $inc: { version: 1 } }, { session });
         prior = null;
       }
-      const closed = await col.findOne({ residentId, episodeCategory: episodeCategory(event.eventType), resolvedAt: { $type: "string" } }, { session, sort: { resolvedAt: -1 } });
+      const closed = await col.findOne({ residentId, ...originFilter, episodeCategory: episodeCategory(event.eventType), resolvedAt: { $type: "string" } }, { session, sort: { resolvedAt: -1 } });
       if (!prior && !event.recurrenceOf && closed && (closed.resolvedAt >= detectedAt || !rearmed(latest, closed.resolvedAt))) throw new ApiError(409, "Delayed observation for a closed episode");
       const id = prior?._id ?? new ObjectId();
       if (prior) {

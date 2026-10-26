@@ -114,6 +114,8 @@ export interface SafetyEvent {
   recommendedAction: string;
   signals: SafetySignals;
   source: "live_camera" | "audio_monitor" | "manual" | "multi_feed_demo";
+  // Set by the server from the monitoring session, never from an upload request.
+  recordingSource?: "live_camera" | "multi_feed_demo";
   audioTranscript?: string | null;
   acknowledged: boolean;
   acknowledgedBy: string | null;

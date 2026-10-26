@@ -46,6 +46,7 @@ async function main() {
   for (const item of plan) {
     const { clip, event, oldKey, newKey, extension } = item;
     if (oldKey === newKey && clip.hasEmbeddedVoice && clip.recordingFormatVersion === 2) continue;
+    if (clip.hasEmbeddedVoice) throw new Error("Already narrated recordings need flatten-live-recordings.ts; do not mix their alert twice");
     const source = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: oldKey }));
     if (!source.Body || !source.ContentLength || source.ContentLength > 50 * 1024 * 1024) throw new Error("Invalid source object");
     const original = await source.Body.transformToByteArray();
@@ -105,7 +106,7 @@ async function main() {
     await db.collection("voice_assets").updateOne({ id: voice.id }, { $set: { audioBase64: Buffer.from(audio).toString("base64") }, $unset: { s3Key: "" } });
   }
   const patients = await db.collection("residents").find({}, { projection: { id: 1, name: 1 } }).toArray();
-  for (const source of ["live-camera", "demo"]) for (const patient of patients) {
+  for (const source of ["demo"]) for (const patient of patients) {
     if (!/^[a-zA-Z0-9_-]+$/.test(patient.id)) throw new Error("Invalid patient ID");
     const key = `critical-events/${source}/residents/${patientFolderName(patient.name)}--${patient.id}/`;
     await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: Buffer.alloc(0), ContentLength: 0, ContentType: "application/x-directory" }));
