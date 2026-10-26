@@ -53,5 +53,5 @@ export function getS3Bucket(): string {
 export async function inspectUploadedObject(key: string) {
   const head = await getS3Client().send(new HeadObjectCommand({ Bucket: getS3Bucket(), Key: key }));
   const sample = await getS3Client().send(new GetObjectCommand({ Bucket: getS3Bucket(), Key: key, Range: "bytes=0-31" }));
-  return { size: head.ContentLength, type: head.ContentType, bytes: await sample.Body?.transformToByteArray() };
+  return { size: head.ContentLength, type: head.ContentType, metadata: head.Metadata, etag: head.ETag, bytes: await sample.Body?.transformToByteArray() };
 }

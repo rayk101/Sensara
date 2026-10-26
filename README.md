@@ -6,6 +6,16 @@ Visual and audio monitoring prototype, originally built at KeanUHacks. Uses fict
 
 Requires Node 22+, npm, and the configured MongoDB Atlas replica set. Your private settings are in `elderwatch-ai/.env.local`; keep that file out of Git. On a fresh checkout copy `.env.local.example` only if `.env.local` does not exist.
 
+If dependencies and local settings are already installed, start from the repository root (`Sensara`):
+
+```sh
+npm run dev -- --port 3000
+```
+
+Open http://127.0.0.1:3000. The root `dev`, `build`, and `start` commands forward to the app in `elderwatch-ai`.
+
+For initial setup, run these commands from the repository root:
+
 ```sh
 cd elderwatch-ai
 npm ci
@@ -103,7 +113,19 @@ Create an account entry using `scripts/create-staff.mjs`, feeding a password thr
 
 Urgent observations display as **CRITICAL**. Each newly critical incident automatically records **15 seconds in Live Camera** or **7 seconds in Multi-feed Demo** (within the requested 5–8 seconds). A Watching incident promoted to Critical triggers capture even when its incident ID stays the same. Repeated urgent samples do not create duplicate recordings for that incident. The live camera shows a fixed notification while preparing and recording, then **Saving clip to S3…**, followed by the saved filename only after upload verification and linking succeed. Failures appear as alerts. Recordings start after escalation; no pre-event buffer is claimed. Partial/unavailable captures are labeled and do not mark a full clip available. Camera loss, patient switching or leaving the page can lose uncaptured footage. A worker cannot reconstruct it. Existing microphone tracks are included only after explicit audio consent.
 
-S3 stays private. The IAM scope is GetObject/PutObject under `critical-events/*`; keys include patient and incident IDs plus readable timestamped filenames. Multi-feed files use the patient's first name (`eleanor-<timestamp>.webm`, `robert-<timestamp>.mp4`, etc.); live-camera files use `live-feed-demo-<timestamp>.webm` (or `.mp4`, according to browser support). Names come from the saved incident, not upload-client input. The server chooses the duration policy from the incident source and verifies both capture timestamps and decoded media duration. Presigned PUT/GET URLs expire in five minutes. PUT uses If-None-Match to prevent overwrites. The server checks ownership, type, size (50 MB maximum), container signature and fully decodes the video with ffmpeg before linking it. Actual media duration is measured separately from capture timestamps. The ffmpeg-static npm dependency supplies local decoding; Docker uses Alpine ffmpeg.
+S3 stays private. The IAM scope is GetObject/PutObject under `critical-events/*`. Recordings are organized as:
+
+```text
+critical-events/
+  live-camera/residents/<patient-name>--<patient-id>/<incident-id>/<patient-name>-<timestamp>.webm
+  demo/residents/<patient-name>--<patient-id>/<incident-id>/<patient-name>-<timestamp>.webm
+```
+
+MP4 is also supported. Names and source folders come from the saved incident. The stable patient ID distinguishes people with identical names. Every completed video includes the complete ElevenLabs spoken alert mixed with audio already present in the recording. Live camera footage captures 15 seconds; demo footage captures 7 seconds. If speech is longer, the last frame is held until it finishes, and `recordedDurationSeconds` distinguishes captured footage from total playback duration. Muting live alert playback does not remove narration from saved videos. Microphone audio is included only when the user has already enabled it; the recorder never opens the microphone itself.
+
+Presigned PUT/GET URLs expire in five minutes. Browser uploads use If-None-Match. The server verifies ownership, type, size (50 MB maximum), timestamps and fully decoded capture duration, then mixes speech with ffmpeg and verifies both output tracks. It conditionally replaces the raw capture at the same key using its ETag, so each incident has one combined video. A server-only processing token makes completion retries safe after the media write. A failed speech or media operation never labels a silent capture as a completed recording. Spoken alerts retain a private MongoDB audio cache for independent dashboard playback; new standalone S3 voice files are no longer created. The ffmpeg-static dependency supplies local processing; Docker uses Alpine ffmpeg.
+
+To migrate old recordings, run `node --env-file=.env.local --import tsx scripts/restructure-recordings.ts` inside `elderwatch-ai` for a dry run. Add `--apply --directory /private/tmp/sensara-recordings-migration` to back up originals, compose and verify replacements, and atomically update incident, clip and upload references. The script also preserves existing voice assets in MongoDB and creates patient folders in both recording categories. Old S3 objects are deliberately left for a separate cleanup after verification; the app's IAM credentials do not have delete permission.
 
 Playback access expires according to `retentionDays`. Physical S3 deletion is a separate bucket lifecycle setting and is not yet applied by this app. Current IAM has no delete/admin permission. Do not describe access expiry as object deletion. Secure server logging, bucket access logging, lifecycle policy and organizational retention approval remain deployment work.
 

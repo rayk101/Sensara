@@ -8,9 +8,18 @@ export function clipPolicy(source: SafetyEvent["source"]) {
 }
 
 export function clipFileName(event: SafetyEvent, extension: "mp4" | "webm") {
-  const patient = event.residentName.trim().split(/\s+/)[0].normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 60) || "patient";
-  const label = event.source === "multi_feed_demo" ? patient : "live-feed-demo";
   const timestamp = new Date(event.firstUrgentAt ?? event.createdAt).toISOString().replace(/[:.]/g, "-");
-  return `${label}-${timestamp}.${extension}`;
+  return `${patientFolderName(event.residentName)}-${timestamp}.${extension}`;
+}
+
+export function patientFolderName(name: string) {
+  return name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "patient";
+}
+
+export function clipObjectKey(event: SafetyEvent, extension: "mp4" | "webm") {
+  if (!event._id || !/^[a-zA-Z0-9_-]+$/.test(String(event._id)) || !/^[a-zA-Z0-9_-]+$/.test(event.residentId)) throw new Error("Invalid recording identity");
+  const source = event.source === "multi_feed_demo" ? "demo" : "live-camera";
+  // Keep the stable patient ID as well as the readable name, so namesakes cannot collide.
+  return `critical-events/${source}/residents/${patientFolderName(event.residentName)}--${event.residentId}/${event._id}/${clipFileName(event, extension)}`;
 }

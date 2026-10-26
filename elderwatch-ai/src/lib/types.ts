@@ -133,6 +133,8 @@ export interface VideoClipMeta {
   clipStartTime: string;
   clipEndTime: string;
   durationSeconds: number;
+  recordedDurationSeconds?: number;
+  hasEmbeddedVoice?: boolean;
 }
 
 // ─── A video clip document stored in the video_clips collection ───────────────
@@ -157,6 +159,9 @@ export interface VideoClip {
   clipStartTime: string;
   clipEndTime: string;
   hasAudioTrack?: boolean;
+  hasEmbeddedVoice?: boolean;
+  recordedDurationSeconds?: number;
+  recordingFormatVersion?: number;
   hasVideoTrack?: boolean;
   transcript?: string | null;
   matchedKeywords?: string[];

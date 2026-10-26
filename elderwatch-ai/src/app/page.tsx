@@ -331,7 +331,7 @@ export default function Dashboard() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sensara-border bg-white p-4">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold" role="status">{mainTab === "multi-feed" ? (demo.anyRunning ? `${demo.runningFeedIds.length} of ${demoFeedIds.length} feeds running` : "Demo paused — play a feed below or start all four") : (isPaused ? "Camera monitoring paused" : "Monitoring enabled")}</p>
-            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">{mainTab === "live-camera" ? "Opening Live Camera starts" : "Starting authorizes"} {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, {mainTab === "live-camera" ? "15-second" : "7-second"} critical incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Audio playback has its own control on the right.</p>
+            <p id="monitoring-consent" className="mt-1 text-xs text-sensara-warm-600">{mainTab === "live-camera" ? "Opening Live Camera starts" : "Starting authorizes"} {mainTab === "live-camera" ? `camera monitoring of ${selectedResident.name}` : "the selected fictional feeds"}, {mainTab === "live-camera" ? "15-second" : "7-second"} critical incident recordings and configured alerts. {mainTab === "multi-feed" && "Start demo plays all four; each feed has its own Play/Pause. "}Saved videos include the spoken alert and any captured audio. Live alert playback has its own control on the right.</p>
           </div>
           {mainTab === "multi-feed" && demo.anyRunning && !demo.allRunning && <button onClick={demo.pauseAll} className="rounded-lg border border-sensara-border px-4 py-2 text-sm font-semibold hover:bg-sensara-warm-100">Pause all</button>}
           <button onClick={toggleMonitoring} aria-describedby="monitoring-consent" className="rounded-lg bg-sensara-forest-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sensara-forest-600">{controlLabel}</button>
@@ -845,7 +845,8 @@ function ResidentHistoryPanel({ residentId }: { residentId: string }) {
                     })}
                   </span>
                   <span className="text-gray-600 ml-1">· {clip.durationSeconds}s</span>
-                  {clip.hasAudioTrack && <span className="text-purple-400 ml-1 text-[9px]">🎙</span>}
+                  {clip.hasEmbeddedVoice ? <span className="text-purple-400 ml-1">· Alert voice included</span> : clip.hasAudioTrack && <span className="text-purple-400 ml-1 text-[9px]">🎙</span>}
+                  {clip.recordedDurationSeconds && clip.durationSeconds > clip.recordedDurationSeconds + 0.5 && <span className="block text-gray-500">{clip.recordedDurationSeconds.toFixed(1)}s captured · Final frame held while the alert finishes</span>}
                 </div>
                 {clip._id && (
                   <button

@@ -1,17 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import ffmpeg from "ffmpeg-static";
 import React, { createElement } from "react";
 import RecordingNotice from "../src/components/RecordingNotice";
 import { createSafetyEvent, getSafetyEvent, linkVideoClipToEvent } from "../src/lib/db/events";
 import { generateMockEvents } from "../src/lib/mockData";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { inspectLocalMedia } from "../src/lib/platform/recordingMedia";
 import { useVideoRecorder } from "../src/hooks/useVideoRecorder";
 import { getS3Client } from "../src/lib/s3";
 import { updateSettings } from "../src/lib/platform/settings";
@@ -26,7 +27,7 @@ import type { SafetyEvent } from "../src/lib/types";
 
 test("Critical detection → recorder → authenticated upload APIs → decoded clip → playable incident", async t => {
   delete process.env.MONGODB_URI;
-  Object.assign(process.env, { LOCAL_DEMO_MODE: "true", AWS_REGION: "us-east-1", AWS_ACCESS_KEY_ID: "test", AWS_SECRET_ACCESS_KEY: "test", S3_VIDEO_BUCKET: "test-clips" });
+  Object.assign(process.env, { LOCAL_DEMO_MODE: "true", AWS_REGION: "us-east-1", AWS_ACCESS_KEY_ID: "test", AWS_SECRET_ACCESS_KEY: "test", S3_VIDEO_BUCKET: "test-clips", ELEVENLABS_API_KEY: "test", ELEVENLABS_VOICE_ID: "test" });
   await updateSettings({ recordingEnabled: true, voiceEnabled: false, notificationsEnabled: false });
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const directory = mkdtempSync(join(tmpdir(), "sensara-flow-test-"));
@@ -34,7 +35,11 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
   const originals = ["MediaRecorder", "MediaStream", "React"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   Object.defineProperty(globalThis, "React", { configurable: true, value: React });
   const notices: string[] = [];
-  const objects = new Map<string, { bytes: Uint8Array; type: string }>();
+  const objects = new Map<string, { bytes: Uint8Array; type: string; metadata?: Record<string, string> }>();
+  const etag = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+  const speechFile = join(directory, "speech.mp3");
+  execFileSync(ffmpeg!, ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=500:duration=9", speechFile]);
+  const speechBytes = readFileSync(speechFile);
   const failures: string[] = [];
   let uploads = 0, fixture: Uint8Array, mimeType = "video/webm", renderer: ReactTestRenderer | undefined;
   let loseCompletionResponse = false, recoveredCompletions = 0;
@@ -65,14 +70,20 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
   // Replace only the hardware and object-storage transport. Classification,
   // recording lifecycle, authentication, upload validation, ffmpeg decoding,
   // persistence/linking and signed playback all execute their production code.
-  t.mock.method(getS3Client(), "send", async (command: GetObjectCommand | HeadObjectCommand) => {
+  t.mock.method(getS3Client(), "send", async (command: GetObjectCommand | HeadObjectCommand | PutObjectCommand) => {
     const object = objects.get(command.input.Key!);
+    if (command instanceof PutObjectCommand) {
+      assert.equal(command.input.IfMatch, object && etag(object.bytes));
+      objects.set(command.input.Key!, { bytes: command.input.Body as Uint8Array, type: command.input.ContentType!, metadata: command.input.Metadata });
+      return {};
+    }
     if (!object) throw new Error("Object not uploaded");
-    return { ContentLength: object.bytes.length, ContentType: object.type,
+    return { ContentLength: object.bytes.length, ContentType: object.type, ETag: etag(object.bytes), Metadata: object.metadata,
       ...(command instanceof GetObjectCommand ? { Body: { transformToByteArray: async () => command.input.Range ? object.bytes.slice(0, 32) : object.bytes } } : {}) };
   });
   globalThis.fetch = (async (path: string, init?: RequestInit) => {
     const url = new URL(path, "http://localhost");
+    if (url.hostname === "api.elevenlabs.io") return new Response(speechBytes, { headers: { "Content-Type": "audio/mpeg" } });
     if (url.hostname !== "localhost") {
       const key = decodeURIComponent(url.pathname.slice(1));
       if (init?.method === "PUT") {
@@ -166,14 +177,21 @@ test("Critical detection → recorder → authenticated upload APIs → decoded 
       const saved = savedEvent as SafetyEvent | null;
       assert.ok(saved?.hasVideoClip);
       assert.equal(saved.workflow?.video.status, "available", "The returned incident must already show a playable clip");
-      assert.ok(Math.abs(saved.videoClip!.durationSeconds - seconds) < .2);
-      assert.ok(saved.videoClip!.fileName!.startsWith(source === "multi_feed_demo" ? "eleanor-" : "live-feed-demo-"));
+      assert.ok(saved.videoClip!.durationSeconds >= seconds - .2);
+      assert.ok(saved.videoClip!.durationSeconds >= 9);
+      assert.ok(Math.abs(saved.videoClip!.recordedDurationSeconds! - seconds) < .2);
+      assert.equal(saved.videoClip!.hasEmbeddedVoice, true);
+      assert.ok(saved.videoClip!.fileName!.startsWith(source === "multi_feed_demo" ? "eleanor-brooks-" : "robert-hayes-"));
       const listed = await clips(new Request(`http://localhost/api/video-clips?residentId=${residentId}`));
       assert.ok((await listed.json()).clips.some((clip: { _id: string }) => clip._id === saved.videoClipId));
       const playable = await playback(new Request(`http://localhost/api/video-clips/${saved.videoClipId}/playback-url`), { params: Promise.resolve({ id: saved.videoClipId! }) });
       assert.equal(playable.status, 200);
       const download = await fetch((await playable.json()).playbackUrl);
-      assert.deepEqual(new Uint8Array(await download.arrayBuffer()), fixture);
+      const combined = new Uint8Array(await download.arrayBuffer());
+      assert.notDeepEqual(combined, fixture);
+      const completedFile = join(directory, `completed.${extension}`); writeFileSync(completedFile, combined);
+      const decoded = await inspectLocalMedia(completedFile);
+      assert.equal(decoded.hasVideoTrack, true); assert.equal(decoded.hasAudioTrack, true);
       await act(async () => renderer!.update(createElement(Probe, { event: saved })));
       assert.equal(recorders.length, before + 1);
       await act(async () => renderer!.unmount()); renderer = undefined;

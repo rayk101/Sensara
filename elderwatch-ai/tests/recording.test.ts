@@ -6,12 +6,13 @@ import { useVideoRecorder } from "../src/hooks/useVideoRecorder";
 import { generateMockEvents } from "../src/lib/mockData";
 import type { SafetyEvent } from "../src/lib/types";
 
-function setup(configured: boolean, completionDrops = 0) {
+function setup(configured: boolean, completionDrops = 0, includeSourceAudio = false) {
   const originalFetch = globalThis.fetch;
   const originals = ["MediaStream", "MediaRecorder", "navigator"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   const requests: Array<{ url: string; body?: Record<string, unknown> }> = [];
   const ownedMicTrack = { kind: "audio", readyState: "live", stop() { this.readyState = "ended"; } };
   const cameraTrack = { kind: "video", readyState: "live", stop() { this.readyState = "ended"; } };
+  const sourceAudioTrack = { kind: "audio", readyState: "live", stop() { this.readyState = "ended"; } };
   let micRequests = 0;
   class Stream {
     constructor(private tracks: typeof cameraTrack[]) {}
@@ -27,7 +28,7 @@ function setup(configured: boolean, completionDrops = 0) {
     ondataavailable?: (event: { data: Blob }) => void;
     onstop?: () => void;
     onerror?: () => void;
-    constructor() { recorders.push(this); }
+    constructor(readonly stream: MediaStream) { recorders.push(this); }
     start() { this.state = "recording"; }
     stop() {
       this.state = "inactive";
@@ -52,8 +53,8 @@ function setup(configured: boolean, completionDrops = 0) {
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   return {
-    stream: new Stream([cameraTrack]) as unknown as MediaStream,
-    requests, recorders, cameraTrack, ownedMicTrack,
+    stream: new Stream([cameraTrack, ...(includeSourceAudio ? [sourceAudioTrack] : [])]) as unknown as MediaStream,
+    requests, recorders, cameraTrack, ownedMicTrack, sourceAudioTrack,
     get micRequests() { return micRequests; },
     restore() {
       globalThis.fetch = originalFetch;
@@ -66,6 +67,21 @@ function setup(configured: boolean, completionDrops = 0) {
 }
 
 const event = (): SafetyEvent => ({ ...generateMockEvents()[0], _id: "recording-event", createdAt: new Date().toISOString(), acknowledged: false });
+
+test("recording keeps audio from the source video without opening a microphone", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  const env = setup(true, 0, true);
+  let renderer: ReactTestRenderer | undefined;
+  function Probe() { useVideoRecorder(env.stream, event(), null, false, () => {}); return null; }
+  try {
+    await act(async () => { renderer = create(createElement(Probe)); });
+    assert.deepEqual(env.recorders[0].stream.getAudioTracks(), [env.sourceAudioTrack]);
+    await act(async () => { t.mock.timers.tick(15000); });
+    assert.equal(env.requests.find(r => r.url === "/api/video-clips")?.body?.hasAudioTrack, true);
+    assert.equal(env.micRequests, 0);
+    assert.equal(env.sourceAudioTrack.readyState, "live");
+  } finally { await act(async () => renderer?.unmount()); env.restore(); }
+});
 
 test("a lost completion response retries linking without recording or uploading twice", async t => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });

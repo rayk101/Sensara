@@ -1,0 +1,10 @@
+{
+  "name": "sensara",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix elderwatch-ai run dev --",
+    "build": "npm --prefix elderwatch-ai run build --",
+    "start": "npm --prefix elderwatch-ai run start --"
+  }
+}

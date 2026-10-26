@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { randomUUID } from "node:crypto";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client, getS3Bucket, isS3Configured } from "../s3";
 import { ObjectId } from "mongodb";
 import { identifier } from "./validation";
 import { getDb, isMongoEnabled } from "../mongodb";
 import { getSafetyEvent } from "../db/events";
-import { ApiError, currentActor } from "./auth";
+import { ApiError, assertPatient, currentActor } from "./auth";
 import { getSettings } from "./settings";
 import { readRecord, writeRecord } from "./store";
 import type { SafetyEvent } from "../types";
@@ -28,34 +28,44 @@ export async function generateSpeech(text: string): Promise<Uint8Array> {
   }
   throw new ApiError(429, "ElevenLabs voice rate limit");
 }
-interface VoiceAsset { id: string; s3Key: string; contentType: string; expiresAt: string; privacy?: string }
+export interface VoiceAsset { id: string; s3Key?: string; audioBase64?: string; contentType: string; expiresAt: string; privacy?: string }
 const cache = new Map<string, Promise<Uint8Array>>();
+export async function readVoiceAssetAudio(asset: VoiceAsset): Promise<Uint8Array> {
+  if (asset.audioBase64) return Buffer.from(asset.audioBase64, "base64");
+  if (!asset.s3Key || !isS3Configured()) throw new ApiError(503, "Saved alert audio is unavailable");
+  const object = await getS3Client().send(new GetObjectCommand({ Bucket: getS3Bucket(), Key: asset.s3Key }));
+  if (!object.Body || !object.ContentLength || object.ContentLength > 5 * 1024 * 1024) throw new ApiError(502, "Invalid saved alert audio");
+  const audio = await object.Body.transformToByteArray();
+  // Alert playback still has a durable cache, without creating standalone S3 MP3 files.
+  await writeRecord("voice_assets", { ...asset, audioBase64: Buffer.from(audio).toString("base64") });
+  return audio;
+}
 async function speechAsset(event: SafetyEvent) {
   const settings = await getSettings();
   const id = String(event._id);
   const asset = await readRecord<VoiceAsset>("voice_assets", id);
   if (asset && Date.parse(asset.expiresAt) <= Date.now()) throw new ApiError(410, "Voice asset retention expired");
-  if (asset && asset.privacy === settings.dataMode && isS3Configured()) {
-    const object = await getS3Client().send(new GetObjectCommand({ Bucket: getS3Bucket(), Key: asset.s3Key }));
-    return (await object.Body!.transformToByteArray());
+  if (asset && asset.privacy === settings.dataMode) {
+    return readVoiceAssetAudio(asset);
   }
   const cacheKey = `${id}:${settings.dataMode}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey)!;
   const work = (async () => {
     const audio = await generateSpeech(voiceText(event, settings.dataMode === "demo"));
-    if (isS3Configured()) {
-      try {
-      const hash = createHash("sha256").update(`${process.env.ELEVENLABS_VOICE_ID}:${process.env.ELEVENLABS_MODEL_ID}:${settings.dataMode}`).digest("hex").slice(0, 16);
-      const s3Key = `critical-events/voice/${id}/${hash}.mp3`;
-      await getS3Client().send(new PutObjectCommand({ Bucket: getS3Bucket(), Key: s3Key, Body: audio, ContentType: "audio/mpeg" }));
-      await writeRecord("voice_assets", { id, s3Key, privacy: settings.dataMode, contentType: "audio/mpeg", expiresAt: new Date(Date.now() + settings.retentionDays * 86400_000).toISOString() });
-      } catch { console.warn("Voice generated; durable audio storage unavailable"); }
-    }
+    await writeRecord("voice_assets", { id, audioBase64: Buffer.from(audio).toString("base64"), privacy: settings.dataMode,
+      contentType: "audio/mpeg", expiresAt: new Date(Date.now() + settings.retentionDays * 86400_000).toISOString() });
     return audio;
   })();
   if (cache.size >= 20) cache.delete(cache.keys().next().value!);
   cache.set(cacheKey, work);
   try { return await work; } catch (e) { cache.delete(cacheKey); throw e; }
+}
+
+// Recorded narration is independent of the device's live audio-playback toggle.
+// It also works for an incident that staff have already acknowledged or resolved.
+export async function recordingSpeech(event: SafetyEvent) {
+  assertPatient(event.residentId);
+  return speechAsset(event);
 }
 export async function processVoiceWork(targetId?: string) {
   if (!isMongoEnabled()) return; // local tests invoke the same generator with mocked transports

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
 import { clipPolicy } from "@/lib/clipPolicy";
+import { recordingAudio } from "@/lib/recordingAudio";
 export type RecordingStatus = "idle" | "preparing" | "capturing" | "uploading" | "saved" | "error" | "s3-disabled";
 // The browser owns capture. Up to three independent urgent incidents may share
 // a camera stream; each retains its own immutable patient/incident snapshot.
@@ -34,13 +35,15 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
     setStatus("preparing"); setStatusMessage(`Critical detected — preparing a ${policy.seconds}-second clip…`);
     let cancelled = false, failed = false;
     let recorder: MediaRecorder | null = null;
+    let releaseAudio = () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     const request = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: controller.signal });
-    const finish = () => { clearTimeout(timer); jobs.current.delete(eventId); };
+    const finish = () => { clearTimeout(timer); releaseAudio(); releaseAudio = () => {}; jobs.current.delete(eventId); };
     jobs.current.set(eventId, () => {
       cancelled = true; controller.abort(); clearTimeout(timer);
       if (recorder?.state === "recording") recorder.stop();
+      releaseAudio(); releaseAudio = () => {};
       void report("partial", "Monitoring stopped before capture/upload completed; no complete clip is available");
     });
     const run = async () => {
@@ -51,11 +54,13 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
         if (typeof MediaRecorder === "undefined") throw new Error("Video recording is unsupported");
         const videoTracks = stream.getVideoTracks().filter(t => t.readyState === "live");
         if (!videoTracks.length) throw new Error("Camera is unavailable");
-        const audioTracks = current.current.micStream?.getAudioTracks().filter(t => t.readyState === "live") ?? [];
+        const audio = await recordingAudio(stream, current.current.micStream);
+        releaseAudio = audio.close;
+        const audioTracks = audio.tracks;
         const recordingStream = new MediaStream([...videoTracks, ...audioTracks]);
         const mimeType = ["video/webm;codecs=vp9,opus", "video/webm", "video/mp4"].find(t => MediaRecorder.isTypeSupported(t));
         if (!mimeType) throw new Error("No supported recording format");
-        if (cancelled) return;
+        if (cancelled) { finish(); return; }
         recorder = new MediaRecorder(recordingStream, { mimeType });
         const chunks: Blob[] = [];
         const startedAt = new Date().toISOString();
@@ -89,6 +94,7 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
         const uploaded = await request(uploadUrl, { method: "PUT", body: blob, headers });
         if (!uploaded.ok) throw new Error("Video upload failed");
         const metadata = { uploadId, eventId, residentId: captured.residentId, clipStartTime, clipEndTime, hasAudioTrack };
+        setStatusMessage("Adding the spoken alert and saving the complete video…");
         let result: Response | null = null;
         // Retry only metadata completion; never re-record or overwrite the S3 object.
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -103,7 +109,7 @@ export function useVideoRecorder(stream: MediaStream | null, event: SafetyEvent 
           }
           if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
         }
-        if (!result?.ok) throw new Error("Uploaded video could not be verified or linked");
+        if (!result?.ok) throw new Error(result ? (await result.json()).error ?? "Uploaded video could not be completed" : "Uploaded video could not be completed");
         const saved = await result.json(); if (saved.event) current.current.onSaved(saved.event);
         setStatus("saved"); setStatusMessage(`Clip saved to S3${saved.fileName ? `: ${saved.fileName}` : ""}`);
       } catch (e) {
