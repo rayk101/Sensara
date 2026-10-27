@@ -10,13 +10,15 @@ export interface AudioMonitorProps {
   sessionId?: string | null;
   isPaused?: boolean;
   onEventSaved?: (event: SafetyEvent) => void;
+  onObservation?: (event: SafetyEvent | null) => void;
   /** Shares the active microphone with clip recording and voice playback controls. */
   onMicStream?: (stream: MediaStream | null) => void;
 }
 
 const CHUNK_DURATION_MS = 6000;
+const OBSERVATION_MAX_AGE_MS = 15000;
 
-export default function AudioMonitor({ resident, sessionId, isPaused = false, onEventSaved, onMicStream }: AudioMonitorProps) {
+export default function AudioMonitor({ resident, sessionId, isPaused = false, onEventSaved, onObservation, onMicStream }: AudioMonitorProps) {
   const descriptionId = useId();
   const [micStatus, setMicStatus] = useState<MicStatus>("idle");
   const [elevenLabsConfigured, setElevenLabsConfigured] = useState<boolean | null>(null);
@@ -31,12 +33,17 @@ export default function AudioMonitor({ resident, sessionId, isPaused = false, on
   const residentRef = useRef(resident);
   const isPausedRef = useRef(isPaused);
   const onEventRef = useRef(onEventSaved);
+  const onObservationRef = useRef(onObservation);
+  const observationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const analysisSequence = useRef(0);
+  const completedAnalysis = useRef(0);
   const onMicStreamRef = useRef(onMicStream);
 
   useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
   useEffect(() => { residentRef.current = resident; }, [resident]);
   useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
   useEffect(() => { onEventRef.current = onEventSaved; }, [onEventSaved]);
+  useEffect(() => { onObservationRef.current = onObservation; }, [onObservation]);
   useEffect(() => { onMicStreamRef.current = onMicStream; }, [onMicStream]);
   useEffect(() => {
     const controller = new AbortController();
@@ -52,6 +59,9 @@ export default function AudioMonitor({ resident, sessionId, isPaused = false, on
     isListeningRef.current = false;
     if (chunkTimerRef.current !== null) clearTimeout(chunkTimerRef.current);
     chunkTimerRef.current = null;
+    if (observationTimerRef.current !== null) clearTimeout(observationTimerRef.current);
+    observationTimerRef.current = null;
+    onObservationRef.current?.(null);
     for (const controller of pendingRequests.current) controller.abort();
     pendingRequests.current.clear();
     const recorder = recorderRef.current;
@@ -72,6 +82,8 @@ export default function AudioMonitor({ resident, sessionId, isPaused = false, on
     const currentResident = residentRef.current;
     if (!currentResident || !sessionRef.current || blob.size < 500 || !isListeningRef.current || isPausedRef.current) return;
     const generation = requestGenerationRef.current;
+    const sequence = ++analysisSequence.current;
+    const observedAt = Date.now();
     const controller = new AbortController();
     pendingRequests.current.add(controller);
     try {
@@ -84,12 +96,24 @@ export default function AudioMonitor({ resident, sessionId, isPaused = false, on
       form.append("idempotencyKey", `${sessionRef.current}:audio:${crypto.randomUUID()}`);
       const response = await fetch("/api/audio/analyze", { method: "POST", body: form, signal: controller.signal });
       const data = await response.json();
-      if (generation !== requestGenerationRef.current || controller.signal.aborted) return;
+      if (generation !== requestGenerationRef.current || controller.signal.aborted || sequence < completedAnalysis.current) return;
+      completedAnalysis.current = sequence;
       if (!response.ok) throw new Error(data.error ?? "Audio analysis unavailable");
+      if (Date.now() - observedAt >= OBSERVATION_MAX_AGE_MS) return;
       setErrorMsg(null);
       if (data.event) onEventRef.current?.(data.event);
+      if (observationTimerRef.current !== null) clearTimeout(observationTimerRef.current);
+      onObservationRef.current?.(data.event ?? null);
+      observationTimerRef.current = data.event ? setTimeout(() => {
+        onObservationRef.current?.(null);
+        observationTimerRef.current = null;
+      }, OBSERVATION_MAX_AGE_MS - (Date.now() - observedAt)) : null;
     } catch (error) {
-      if (generation === requestGenerationRef.current && !controller.signal.aborted) {
+      if (generation === requestGenerationRef.current && !controller.signal.aborted && sequence >= completedAnalysis.current) {
+        completedAnalysis.current = sequence;
+        if (observationTimerRef.current !== null) clearTimeout(observationTimerRef.current);
+        observationTimerRef.current = null;
+        onObservationRef.current?.(null);
         setErrorMsg(error instanceof Error ? error.message : "Audio analysis failed");
       }
     } finally { pendingRequests.current.delete(controller); }

@@ -10,9 +10,16 @@ async function GETHandler(req: Request) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     return NextResponse.json({ error: "limit must be an integer between 1 and 200" }, { status: 400 });
   }
+  const idsParam = searchParams.get("ids");
+  const ids = idsParam === null ? undefined : idsParam === "" ? [] : idsParam.split(",");
+  if (ids && (ids.length > 100 || ids.some(id => !/^[a-f\d]{24}$/i.test(id)))) {
+    return NextResponse.json({ error: "ids must contain at most 100 valid incident IDs" }, { status: 400 });
+  }
   try {
     const residentId = searchParams.get("residentId");
-    const events = residentId
+    const events = ids !== undefined
+      ? (await getRecentEvents(limit, ids)).filter(event => !residentId || event.residentId === residentId)
+      : residentId
       ? await getEventsByResident(residentId, limit)
       : await getRecentEvents(limit);
     return NextResponse.json({ events });

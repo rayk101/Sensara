@@ -30,6 +30,7 @@ interface DemoVideoTileProps {
   isPaused?: boolean;
   onTogglePlayback: () => void;
   onStatusChange?: (feedId: string, status: DemoFeedStatus) => void;
+  onIncident?: (feedId: string, eventId: string | null) => void;
 }
 
 const EVENT_LABELS: Record<string, string> = {
@@ -45,7 +46,7 @@ const EVENT_LABELS: Record<string, string> = {
   possible_distress_sound: "Distress Sound",
 };
 
-export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback, isPaused = false }: DemoVideoTileProps) {
+export default function DemoVideoTile({ config, onStatusChange, onIncident, onTogglePlayback, isPaused = false }: DemoVideoTileProps) {
   const { sessionId, sessionError } = useMonitoringSession(config.residentId, !isPaused, "multi_feed_demo", config.id);
   const [capturedStream, setCapturedStream] = useState<MediaStream | null>(null);
   const [savedEvent, setSavedEvent] = useState<SafetyEvent | null>(null);
@@ -56,6 +57,11 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
   const currentStatus = pose.observation;
   const lastPose = pose.lastFrame;
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [currentIncidentId, setCurrentIncidentId] = useState<string | null>(null);
+  const alertActive = !isPaused && !!sessionId && !sessionError && !videoError && !saveMsg && playbackStatus === "playing" && currentStatus.available && currentStatus.severity !== "stable";
+  useEffect(() => { setCurrentIncidentId(null); }, [sessionId]);
+  useEffect(() => { if (!alertActive) setCurrentIncidentId(null); }, [alertActive]);
+  useEffect(() => { onIncident?.(config.id, alertActive ? currentIncidentId : null); }, [onIncident, config.id, alertActive, currentIncidentId]);
 
   const recording = useVideoRecorder(capturedStream, savedEvent, null, isPaused, setSavedEvent, "multi_feed_demo");
   useEffect(() => {
@@ -83,7 +89,13 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
         const response = await fetch("/api/observations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ residentId: config.residentId, source: "multi_feed_demo", sessionId, scenarioId: config.id, videoTime: pose.frames.current.at(-1)?.time ?? 0, poseFrames: pose.frames.current, sourceEventId: crypto.randomUUID(), detectedAt: new Date().toISOString() }) });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? "Observation could not be saved");
-        if (!stopped) { if (body.event) setSavedEvent(body.event); setSaveMsg(null); }
+        if (!stopped) {
+          if (body.event) {
+            setSavedEvent(body.event);
+          }
+          setCurrentIncidentId(body.event?._id ?? null);
+          setSaveMsg(null);
+        }
       } catch (error) { if (!stopped) setSaveMsg(error instanceof Error ? error.message : "Persistence unavailable"); }
       finally { busy = false; }
     };
@@ -121,7 +133,6 @@ export default function DemoVideoTile({ config, onStatusChange, onTogglePlayback
         )}
         <div className="camera-media-top">
           <span className={`feed-badge feed-badge--${severity}`} title={currentStatus.available ? currentStatus.reason : undefined}>{statusLabel}</span>
-          <span className="feed-source">RECORDED</span>
         </div>
         {videoError ? <div className="camera-empty">
           <p>Video unavailable</p>

@@ -87,7 +87,6 @@ canvas {
 .feed-badge--stable { color: #92cbc5; }
 .feed-badge--watch { color: #e5c078; }
 .feed-badge--urgent, .feed-badge--assist { color: #f39b82; }
-.feed-source { color: #e1e8e8; text-shadow: 0 1px 4px #203c44; font-size: 11px; letter-spacing: .5px; }
 .feed-play, .feed-pause { display: grid; place-items: center; color: white; background: #294651a6; border: 1px solid #ffffff70; border-radius: 50%; backdrop-filter: blur(3px); }
 .feed-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 48px; height: 48px; }
 .feed-play svg { width: 24px; height: 24px; margin-left: 3px; }
@@ -112,10 +111,16 @@ canvas {
 .incident-badge { color: #548f89; padding-block: 5px; font-size: 14px; }
 .incident-badge--urgent, .incident-badge--assist { color: #dc755c; }
 .incident-badge--watch { color: #b18b43; }
+.incident-badge--stable { color: #38805b; }
 .incident-summary h3 { font-size: 18px; line-height: 1.3; font-weight: 600; margin: 12px 0 6px; }
 .incident-room, .incident-resident { color: var(--command-muted); font-size: 15px; line-height: 1.5; margin: 0 0 5px; }
 .incident-description { color: var(--command-muted); font-size: 16px; line-height: 1.5; margin: 5px 0 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .incident-summary[aria-expanded="true"] .incident-description { -webkit-line-clamp: unset; }
+.incident-item--activity .incident-description { display: block; overflow: visible; }
+.activity-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--command-muted); font-size: 12px; margin-top: 8px; }
+.activity-response { margin-top: 12px; color: var(--command-muted); font-size: 13px; line-height: 1.5; }
+.activity-response p + p { margin-top: 5px; }
+.activity-urgent { color: #bd634d; font-weight: 600; }
 .incident-detail { padding: 0 20px 20px; font-size: 14px; color: var(--command-muted); }
 .incident-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; font-size: 13px; margin-bottom: 16px; }
 .incident-meta > span { text-transform: capitalize; }

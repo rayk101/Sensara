@@ -26,17 +26,22 @@ export async function createSafetyEvent(event: Omit<SafetyEvent, "_id">): Promis
   return { ...event, _id: result.insertedId.toHexString() };
 }
 
-export async function getRecentEvents(limit = 50): Promise<SafetyEvent[]> {
+export async function getRecentEvents(limit = 50, ids?: string[]): Promise<SafetyEvent[]> {
+  if (ids?.length === 0) return [];
   if (!isMongoEnabled()) {
-    return getInMemoryStore().getRecentEvents(100000).filter(e => { try { assertPatient(e.residentId); return true; } catch { return false; } }).slice(0, limit);
+    return getInMemoryStore().getRecentEvents(100000).filter(e => {
+      if (ids && (!e._id || !ids.includes(e._id))) return false;
+      try { assertPatient(e.residentId); return true; } catch { return false; }
+    }).slice(0, limit);
   }
   const db = await getDb();
-  return db
-    .collection<SafetyEvent>(COLLECTION)
-    .find(patientScope())
+  const events = await db
+    .collection<Omit<SafetyEvent, "_id">>(COLLECTION)
+    .find({ ...patientScope(), ...(ids ? { _id: { $in: ids.map(id => new ObjectId(id)) } } : {}) })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .toArray() as Promise<SafetyEvent[]>;
+    .toArray();
+  return events.map(event => ({ ...event, _id: event._id.toString() }));
 }
 
 export async function getEventsByResident(

@@ -12,9 +12,10 @@ const DISPLAY_ORDER = [
   { id: "feed3", name: "Daniel Price" },
 ];
 
-export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, residents }: {
+export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, onIncident, residents }: {
   runningFeedIds: string[];
   onToggleFeed: (id: string) => void;
+  onIncident: (feedId: string, eventId: string | null) => void;
   residents: ResidentProfile[];
 }) {
   const feeds = DISPLAY_ORDER.flatMap(({ id, name }) => {
@@ -25,7 +26,7 @@ export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, residents 
 
   return <div className="camera-grid">
     {feeds.map(feed => <DemoVideoTile key={feed.id} config={feed}
-      isPaused={!runningFeedIds.includes(feed.id)} onTogglePlayback={() => onToggleFeed(feed.id)} />)}
+      isPaused={!runningFeedIds.includes(feed.id)} onTogglePlayback={() => onToggleFeed(feed.id)} onIncident={onIncident} />)}
     {feeds.length < 4 && <p role="alert" className="connection-message">Some residents are unavailable or not assigned to this account.</p>}
   </div>;
 }

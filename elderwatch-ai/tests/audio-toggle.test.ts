@@ -15,7 +15,7 @@ function environment() {
   const track = { stop: () => stopped++, addEventListener: (_: string, callback: () => void) => { ended = callback; } };
   const stream = { getTracks: () => [track], getAudioTracks: () => [track] } as unknown as MediaStream;
   let requestMic: () => Promise<MediaStream> = async () => stream;
-  let resolveAnalysis: ((response: Response) => void) | undefined;
+  const analysisResponses: Array<(response: Response) => void> = [];
   let analysisSignal: AbortSignal | undefined;
   let recorderFails = false;
   const recorders: Recorder[] = [];
@@ -42,7 +42,7 @@ function environment() {
     if (url === "/api/audio/analyze") {
       if (init?.method === "POST") {
         analysisSignal = init.signal as AbortSignal;
-        return new Promise(resolve => { resolveAnalysis = resolve; });
+        return new Promise(resolve => { analysisResponses.push(resolve); });
       }
       return Response.json({ elevenLabsConfigured: true });
     }
@@ -65,7 +65,7 @@ function environment() {
     stream, recorders, playbackStarted, disconnect: () => ended(), setMic: (request: () => Promise<MediaStream>) => { requestMic = request; },
     failRecorder: () => { recorderFails = true; },
     get stopped() { return stopped; }, get played() { return played; }, get paused() { return paused; },
-    get analysisSignal() { return analysisSignal; }, completeAnalysis: () => resolveAnalysis?.(Response.json({ event: { _id: "late-event" } })),
+    get analysisSignal() { return analysisSignal; }, completeAnalysis: (event: object | null = { _id: "late-event" }, index = analysisResponses.length - 1) => analysisResponses[index]?.(Response.json({ event })),
     restore: () => { for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } },
   };
 }
@@ -98,6 +98,41 @@ test("one switch starts microphone capture and spoken alerts; Off stops both and
     assert.equal(env.analysisSignal?.aborted, true);
     await act(async () => env.completeAnalysis());
     assert.equal(savedEvents, 0, "Late analysis cannot update a stopped monitor");
+  } finally { await act(async () => renderer?.unmount()); env.restore(); }
+});
+
+test("current audio detections clear on normal audio, expire without fresh evidence, and ignore older results", async t => {
+  const env = environment();
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+  let renderer: ReactTestRenderer | undefined;
+  let current: string | null = null;
+  const event = { _id: "current-audio", residentId: MOCK_RESIDENTS[0].id };
+  try {
+    await act(async () => { renderer = create(createElement(AudioMonitor, {
+      resident: MOCK_RESIDENTS[0], sessionId: "session", onObservation: observation => { current = observation?._id ?? null; },
+    })); });
+    const toggle = () => renderer!.root.findByProps({ role: "switch" });
+    const chunk = async () => { await act(async () => env.recorders.at(-1)!.stop()); };
+    const nextChunk = async () => { await act(async () => t.mock.timers.tick(100)); await chunk(); };
+    await act(async () => toggle().props.onClick());
+    await chunk();
+    await nextChunk();
+    await act(async () => env.completeAnalysis(null, 1));
+    await act(async () => env.completeAnalysis(event, 0));
+    assert.equal(current, null, "An older distress result cannot replace newer normal audio");
+    await nextChunk();
+    await act(async () => env.completeAnalysis(event));
+    assert.equal(current, event._id);
+    await nextChunk();
+    await act(async () => env.completeAnalysis(null));
+    assert.equal(current, null, "Normal audio clears the active detection immediately");
+    await nextChunk();
+    await act(async () => env.completeAnalysis(event));
+    assert.equal(current, event._id);
+    await act(async () => t.mock.timers.tick(15000));
+    assert.equal(current, null, "A stalled transcription cannot leave an old detection active forever");
+    await act(async () => toggle().props.onClick());
+    assert.equal(current, null);
   } finally { await act(async () => renderer?.unmount()); env.restore(); }
 });
 

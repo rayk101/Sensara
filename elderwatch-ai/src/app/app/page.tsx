@@ -14,6 +14,7 @@ import AudioMonitor from "@/components/AudioMonitor";
 import MultiFeedDemo from "@/components/MultiFeedDemo";
 import { useDemoControls } from "@/hooks/useDemoControls";
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
+import { updateActivityFeed, type ActivityFeed, type ActivityUpdate, type MonitoringActivity } from "@/lib/monitoringActivity";
 import type { ResidentProfile, SafetyEvent, SafeZone } from "@/lib/types";
 
 const SAFE_ZONE_KEY = "elderwatch_safe_zone";
@@ -41,8 +42,22 @@ export default function Dashboard() {
   const [authRequired, setAuthRequired] = useState(false);
   const [patientError, setPatientError] = useState("");
   const [patientLoadAttempt, setPatientLoadAttempt] = useState(0);
+  const [demoIncidents, setDemoIncidents] = useState<Record<string, string | null>>({});
+  const [demoHistoryIds, setDemoHistoryIds] = useState<string[]>([]);
+  const handleDemoIncident = useCallback((feedId: string, id: string | null) => {
+    setDemoIncidents(ids => (ids[feedId] ?? null) === id ? ids : { ...ids, [feedId]: id });
+    if (id) setDemoHistoryIds(ids => ids.includes(id) ? ids : [id, ...ids].slice(0, 100));
+  }, []);
+  const [liveActivity, setLiveActivity] = useState<ActivityFeed>({ entries: [], current: {} });
+  const handleLiveActivity = useCallback((update: ActivityUpdate) => {
+    setLiveActivity(state => updateActivityFeed(state, update));
+  }, []);
   const demoFeedIds = useMemo(() => DEMO_SCENARIOS.filter(scenario => residents.some(resident => resident.id === scenario.residentId && resident.active !== false)).map(scenario => scenario.id), [residents]);
   const demo = useDemoControls(demoFeedIds, mainTab === "multi-feed");
+  const demoIncidentIds = [...new Set(demo.runningFeedIds.flatMap(id => demoIncidents[id] ? [demoIncidents[id]!] : []))];
+  const liveIncidentIds = [...new Set(liveActivity.entries.flatMap(entry => entry.event?._id ? [entry.event._id] : []))];
+  const activeActivityIds = mainTab === "live-camera" && !isPaused
+    ? Object.values(liveActivity.current).filter((id): id is string => !!id) : [];
   const selectedResident = residents.find(resident => resident.id === selectedResidentId) ?? residents[0];
 
   useEffect(() => {
@@ -122,16 +137,20 @@ export default function Dashboard() {
       <div className={`command-layout${mainTab === "reports" ? " command-layout--reports" : mainTab === "live-camera" ? " command-layout--live" : ""}`}>
         <div className="command-feeds" hidden={mainTab === "reports"}>
           <div hidden={mainTab !== "multi-feed"}>
-            <MultiFeedDemo residents={residents} runningFeedIds={demo.runningFeedIds} onToggleFeed={demo.toggleFeed} />
+            <MultiFeedDemo residents={residents} runningFeedIds={demo.runningFeedIds} onToggleFeed={demo.toggleFeed} onIncident={handleDemoIncident} />
           </div>
           <div hidden={mainTab !== "live-camera"}>
             <LiveCamera resident={selectedResident}
               enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} onPause={() => setIsPaused(true)}
-              onAudioEnabledChange={setLiveAudioEnabled} />
+              onAudioEnabledChange={setLiveAudioEnabled} onActivity={handleLiveActivity} />
           </div>
         </div>
         <aside className="command-sidebar" aria-label="Alerts and notifications">
           <IncidentCenter showHistory={mainTab === "reports"} residentId={mainTab === "live-camera" ? selectedResident.id : undefined}
+            eventIds={mainTab === "multi-feed" ? demoHistoryIds : mainTab === "live-camera" ? liveIncidentIds : undefined}
+            activeEventIds={mainTab === "multi-feed" ? demoIncidentIds : undefined}
+            activities={mainTab === "live-camera" ? liveActivity.entries : undefined}
+            activeActivityIds={mainTab === "live-camera" ? activeActivityIds : undefined}
             voiceEnabled={mainTab === "live-camera" ? liveAudioEnabled && !isPaused : undefined}
             title={mainTab === "live-camera" ? "Notifications" : undefined} />
         </aside>
@@ -140,8 +159,9 @@ export default function Dashboard() {
   </div>;
 }
 
-function LiveCamera({ resident, enabled, onStart, onPause, onAudioEnabledChange }: {
+function LiveCamera({ resident, enabled, onStart, onPause, onAudioEnabledChange, onActivity }: {
   resident: ResidentProfile; enabled: boolean; onStart: () => void; onPause: () => void; onAudioEnabledChange: (enabled: boolean) => void;
+  onActivity: (update: ActivityUpdate) => void;
 }) {
   const [safeZone, setSafeZone] = useState<SafeZone>(DEFAULT_SAFE_ZONE);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -164,10 +184,22 @@ function LiveCamera({ resident, enabled, onStart, onPause, onAudioEnabledChange 
   const liveCapture = useRef<Pick<ReturnType<typeof useVideoRecorder>, "beginLiveCapture" | "bindLiveCapture"> | null>(null);
   const onCriticalCapture = useCallback((trigger: LiveCaptureTrigger) => liveCapture.current?.beginLiveCapture(trigger), []);
   const onCriticalPersisted = useCallback((requestId: string, event: SafetyEvent | null) => liveCapture.current?.bindLiveCapture(requestId, event), []);
+  const audioActivity = useRef<MonitoringActivity | null>(null);
+  const handleAudioObservation = useCallback((event: SafetyEvent | null) => {
+    if (!event) { audioActivity.current = null; onActivity({ type: "inactive", source: "audio" }); return; }
+    const previous = audioActivity.current;
+    if (!previous || previous.eventType !== event.eventType || previous.severity !== event.severity) {
+      audioActivity.current = { id: crypto.randomUUID(), source: "audio", residentId: event.residentId, residentName: event.residentName,
+        room: event.room, eventType: event.eventType, severity: event.severity, reason: event.reason, confidence: event.confidence,
+        observedAt: new Date().toISOString(), event, persistence: "saved" };
+      onActivity({ type: "observed", activity: audioActivity.current });
+    } else onActivity({ type: "saved", id: previous.id, event });
+  }, [onActivity]);
   const { signals, classification, observationAvailable, processFrame, upsertEvent, persistenceError, latestEvent } = useResidentMonitor(
-    resident, safeZone, { isPaused: !enabled, seizureDetectionEnabled: false, sessionId, onCriticalCapture, onCriticalPersisted }
+    resident, safeZone, { isPaused: !enabled, seizureDetectionEnabled: false, sessionId, onCriticalCapture, onCriticalPersisted, onActivity }
   );
   const { landmarks, videoRef, canvasRef, status, errorMessage, stream, retry } = usePoseDetection(enabled, processFrame, cameraId, resident.id);
+  useEffect(() => { if (!enabled || status !== "running") onActivity({ type: "inactive", source: "camera" }); }, [enabled, status, onActivity]);
   const recording = useVideoRecorder(stream, latestEvent, micStream, !enabled, upsertEvent, "live_camera");
   useEffect(() => { liveCapture.current = { beginLiveCapture: recording.beginLiveCapture, bindLiveCapture: recording.bindLiveCapture }; }, [recording.beginLiveCapture, recording.bindLiveCapture]);
   useEffect(() => {
@@ -202,7 +234,7 @@ function LiveCamera({ resident, enabled, onStart, onPause, onAudioEnabledChange 
       </select></label>
       <div className="live-zone-options"><label><input type="checkbox" checked={safeZoneEditMode} onChange={event => setSafeZoneEditMode(event.target.checked)} /> Edit safe zone</label>
         <button className="text-action" onClick={() => handleSafeZoneChange(DEFAULT_SAFE_ZONE)}>Reset</button></div>
-      <AudioMonitor sessionId={sessionId} resident={resident} isPaused={!enabled} onEventSaved={upsertEvent} onMicStream={handleMicStream} />
+      <AudioMonitor sessionId={sessionId} resident={resident} isPaused={!enabled} onEventSaved={upsertEvent} onObservation={handleAudioObservation} onMicStream={handleMicStream} />
     </div>
     <RecordingNotice status={persistenceError && classification.severity === "urgent" ? "error" : recording.recordingStatus}
       message={persistenceError && classification.severity === "urgent" ? persistenceError : recording.statusMessage} />

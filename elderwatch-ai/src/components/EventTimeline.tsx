@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { residentDisplayName } from "@/lib/residentDisplay";
 import type { SafetyEvent } from "@/lib/types";
+import { messageProgress, type MonitoringActivity } from "@/lib/monitoringActivity";
 
 export interface IncidentNotice {
   id: string; eventId: string; residentId: string; staffId: string; channel: string; status: string; error: string | null;
@@ -13,6 +14,8 @@ interface EventTimelineProps {
   onRetryNotification?: (notice: IncidentNotice) => Promise<void>;
   emptyMessage?: string;
   events: SafetyEvent[];
+  activities?: MonitoringActivity[];
+  activeActivityIds?: string[];
   onResolve?: (eventId: string, reason: string) => Promise<void>;
   onDismiss?: (eventId: string, reason: string) => Promise<void>;
   onAcknowledge: (eventId: string) => Promise<void>;
@@ -116,7 +119,7 @@ const SEVERITY_LABELS: Record<string, string> = { urgent: "Critical", assist: "N
 const CHANNEL_LABELS: Record<string, string> = { photon: "iMessage", imessage: "iMessage", sms: "SMS", email: "Email", voice: "Voice" };
 const readable = (value: string) => value.replace(/_/g, " ");
 
-export default function EventTimeline({ events, onAcknowledge, onAddNote, onResolve, onDismiss, notifications = [], onRetryNotification, emptyMessage = "No saved incidents" }: EventTimelineProps) {
+export default function EventTimeline({ events, activities, activeActivityIds, onAcknowledge, onAddNote, onResolve, onDismiss, notifications = [], onRetryNotification, emptyMessage = "No saved incidents" }: EventTimelineProps) {
   const [closureReason, setClosureReason] = useState<Record<string, string>>({});
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -124,6 +127,9 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
   const [noteText, setNoteText] = useState<Record<string, string>>({});
   const [viewingClip, setViewingClip] = useState<{ clipId: string; label: string } | null>(null);
   const deduplicated = events.filter((event, index, all) => all.findIndex(other => other._id === event._id) === index);
+  const rows: Array<{ key: string; event?: SafetyEvent; activity?: MonitoringActivity }> = activities
+    ? activities.map(activity => ({ key: activity.id, activity, event: events.find(event => event._id === activity.event?._id) ?? activity.event }))
+    : deduplicated.map(event => ({ key: event._id ?? "", event }));
 
   const perform = async (id: string, action: () => Promise<void>) => {
     setPendingId(id); setActionMessage(null);
@@ -134,25 +140,35 @@ export default function EventTimeline({ events, onAcknowledge, onAddNote, onReso
 
   return <>
     {actionMessage && <p role="status" className="panel-message">{actionMessage}</p>}
-    <div className="incident-list custom-scrollbar">
-      {deduplicated.length === 0 && <p className="incident-empty">{emptyMessage}</p>}
-      {deduplicated.map(event => {
-        const id = event._id ?? "";
-        const expanded = expandedId === id;
-        const closed = ["resolved", "dismissed"].includes(event.status ?? "");
+    <div className="incident-list custom-scrollbar" role={activities ? "log" : undefined} aria-live={activities ? "polite" : undefined} aria-relevant={activities ? "additions text" : undefined}>
+      {rows.length === 0 && <p className="incident-empty">{emptyMessage}</p>}
+      {rows.map(({ key, event, activity }) => {
+        const snapshot = activity ?? event!;
+        const id = event?._id ?? "";
+        const expanded = expandedId === key;
+        const closed = ["resolved", "dismissed"].includes(event?.status ?? "");
         const notices = notifications.filter(notice => notice.eventId === id);
-        return <article key={id} className="incident-item">
-          <button className="incident-summary" aria-expanded={expanded} aria-controls={`incident-${id}`}
-            onClick={() => setExpandedId(expanded ? null : id)}>
-            <span className={`incident-badge incident-badge--${closed ? "stable" : event.severity}`}>
-              {closed ? readable(event.status!) : SEVERITY_LABELS[event.severity]}
+        const Summary = event ? "button" : "div";
+        return <article key={key} className={`incident-item${activity ? " incident-item--activity" : ""}`} data-activity-id={activity?.id}>
+          <Summary className="incident-summary" aria-expanded={event ? expanded : undefined} aria-controls={event ? `incident-${key}` : undefined}
+            onClick={() => { if (event) setExpandedId(expanded ? null : key); }}>
+            <span className={`incident-badge incident-badge--${!activity && closed ? "stable" : snapshot.severity}`}>
+              {!activity && closed ? readable(event!.status!) : SEVERITY_LABELS[snapshot.severity]}
             </span>
-            <h3>{EVENT_LABELS[event.eventType] ?? readable(event.eventType)}</h3>
-            <p className="incident-room">{event.room}</p>
-            <p className="incident-resident">{residentDisplayName(event.residentId, event.residentName)}</p>
-            <p className="incident-description">{event.reason}</p>
-          </button>
-          {expanded && <div className="incident-detail" id={`incident-${id}`}>
+            {activity && <div className="activity-meta"><time dateTime={activity.observedAt}>{new Date(activity.observedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time>
+              <span>{activeActivityIds?.includes(activity.id) ? "Current" : "Earlier"}</span></div>}
+            <h3>{activity?.severity === "stable" ? "Stable movement" : EVENT_LABELS[snapshot.eventType] ?? readable(snapshot.eventType)}</h3>
+            <p className="incident-room">{snapshot.room}</p>
+            <p className="incident-resident">{residentDisplayName(snapshot.residentId, snapshot.residentName)}</p>
+            <p className="incident-description">{snapshot.reason}</p>
+            {activity?.severity === "urgent" && <div className="activity-response">
+              <p className="activity-urgent">{activeActivityIds?.includes(activity.id) ? "Immediate assistance needed. Check the resident now." : "Critical detection recorded. Review the incident and response."}</p>
+              {messageProgress(event, notices, activity.persistence).map(message => <p key={message}>{message}</p>)}
+              {event?.hasVideoClip && <p>Incident clip saved.</p>}
+              {event?.acknowledged && <p>Caregiver acknowledged this incident.</p>}
+            </div>}
+          </Summary>
+          {event && expanded && <div className="incident-detail" id={`incident-${key}`}>
             <div className="incident-meta"><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
               <span>{readable(event.status ?? (event.acknowledged ? "acknowledged" : "open"))}</span></div>
             {event.audioTranscript && <p className="incident-transcript">“{event.audioTranscript}”</p>}

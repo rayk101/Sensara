@@ -2,8 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
 import EventTimeline, { type IncidentNotice } from "./EventTimeline";
-export default function IncidentCenter({ onEvents, showHistory = false, residentId, title, voiceEnabled }: {
+import type { MonitoringActivity } from "@/lib/monitoringActivity";
+export default function IncidentCenter({ onEvents, showHistory = false, residentId, title, voiceEnabled, eventIds, activeEventIds, activities, activeActivityIds }: {
   onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean; residentId?: string; title?: string; voiceEnabled?: boolean;
+  /** Undefined shows saved history; an empty list starts a fresh monitoring view. */
+  eventIds?: string[];
+  activeEventIds?: string[];
+  activities?: MonitoringActivity[];
+  activeActivityIds?: string[];
 }) {
   const [events, setEvents] = useState<SafetyEvent[]>([]);
   const [notices, setNotices] = useState<IncidentNotice[]>([]);
@@ -17,20 +23,40 @@ export default function IncidentCenter({ onEvents, showHistory = false, resident
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const seen = useRef(new Set<string>());
   const processing = useRef(false);
+  const refreshState = useRef({ version: 0 });
+  const eventQuery = eventIds === undefined ? "" : `&ids=${eventIds.join(",")}`;
+  const awaitingIncidents = eventIds?.length === 0;
   const refresh = useCallback(async () => {
+    const version = ++refreshState.current.version;
+    if (awaitingIncidents) { setEvents([]); setNotices([]); setError(""); setLoaded(true); return; }
     try {
-      const [er, nr] = await Promise.all([fetch("/api/events?limit=100"), fetch("/api/notifications")]);
+      const [er, nr] = await Promise.all([fetch(`/api/events?limit=100${eventQuery}`), fetch("/api/notifications")]);
       if (!er.ok || !nr.ok) throw new Error("Incident history is unavailable. Monitoring results may not be saved.");
-      const [e, n] = await Promise.all([er.json(), nr.json()]); setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError(""); setLoaded(true);
-    } catch (e) { setError(e instanceof Error ? e.message : "Connection unavailable"); }
-  }, [onEvents]);
-  useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 3000); return () => clearInterval(timer); }, [refresh]);
-  const displayedEvents = residentId ? events.filter(event => event.residentId === residentId) : events;
+      const [e, n] = await Promise.all([er.json(), nr.json()]);
+      if (version !== refreshState.current.version) return;
+      setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError(""); setLoaded(true);
+    } catch (e) { if (version === refreshState.current.version) setError(e instanceof Error ? e.message : "Connection unavailable"); }
+  }, [onEvents, eventQuery, awaitingIncidents]);
+  useEffect(() => {
+    const state = refreshState.current;
+    void refresh();
+    if (awaitingIncidents) return;
+    const timer = setInterval(() => { void refresh(); }, 3000);
+    return () => { clearInterval(timer); state.version++; };
+  }, [refresh, awaitingIncidents]);
+  const displayedEvents = events.filter(event => (!residentId || event.residentId === residentId)
+    && (eventIds === undefined || !!event._id && eventIds.includes(event._id)));
   const openEvents = displayedEvents.filter(event => event.severity !== "stable" && !["resolved", "dismissed"].includes(event.status ?? ""));
-  const eventKey = events.map(e => `${e._id}:${e.acknowledged}:${e.status}`).join("|");
+  const visibleActivities = activities?.filter(activity => !residentId || activity.residentId === residentId);
+  const activeEvents = openEvents.filter(event => activeEventIds === undefined || !!event._id && activeEventIds.includes(event._id));
+  const activeActivities = visibleActivities?.filter(activity => activity.severity !== "stable" && activeActivityIds?.includes(activity.id)
+    && !["resolved", "dismissed"].includes((displayedEvents.find(event => event._id === activity.event?._id) ?? activity.event)?.status ?? ""));
+  const openCount = activeActivities ? new Set(activeActivities.map(activity => activity.event?._id ?? activity.id)).size : activeEvents.length;
+  const voiceEvents = activities ? activeEvents.filter(event => activeActivities?.some(activity => activity.event?._id === event._id)) : activeEvents;
+  const eventKey = voiceEvents.map(e => `${e._id}:${e.severity}:${e.acknowledged}:${e.status}`).join("|");
   useEffect(() => {
     if (!audioEnabled || processing.current) return;
-    const event = events.find(e => e._id && e.severity === "urgent" && e.workflow?.voice.status !== "not_requested" && !e.acknowledged && !["resolved", "dismissed"].includes(e.status ?? "") && !seen.current.has(e._id));
+    const event = voiceEvents.find(e => e._id && e.severity === "urgent" && e.workflow?.voice.status !== "not_requested" && !e.acknowledged && !["resolved", "dismissed"].includes(e.status ?? "") && !seen.current.has(e._id));
     if (!event?._id) return;
     const id = event._id;
     let disposed = false;
@@ -95,14 +121,15 @@ export default function IncidentCenter({ onEvents, showHistory = false, resident
             {audioEnabled ? <><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14" strokeLinecap="round" /></> : <path d="m16 9 5 6m0-6-5 6" strokeLinecap="round" />}
           </svg>
         </button>}
-        <span className="open-count" aria-live="polite">{error ? "Unavailable" : !loaded ? "Loading…" : `${openEvents.length} open`}</span>
+        {!showHistory && <span className="open-count" aria-live="polite">{activities !== undefined || activeEventIds?.length === 0 || awaitingIncidents ? `${openCount} open` : error ? "Unavailable" : !loaded ? "Loading…" : `${openCount} open`}</span>}
       </div>
     </header>
     {error && <p role="alert" className="panel-message">{error}</p>}
     {audioEnabled && <div className="voice-status" role="status"><span>{voiceStatus}</span>
       <button onClick={() => { if (manualPlayRef.current) { manualPlayRef.current(); return; } seen.current.clear(); setRetry(value => value + 1); }}>{voiceStatus.startsWith("Audio blocked") ? "Play alert" : "Retry voice"}</button>
     </div>}
-    {loaded && <EventTimeline events={showHistory ? displayedEvents : openEvents} notifications={notices} onRetryNotification={retryNotice}
+    {(loaded || activities !== undefined) && <EventTimeline events={showHistory || activeEventIds !== undefined || activities !== undefined ? displayedEvents : openEvents}
+      activities={visibleActivities} activeActivityIds={activeActivityIds} notifications={notices} onRetryNotification={retryNotice}
       emptyMessage={showHistory ? "No saved incidents" : "No incidents need attention"}
       onAcknowledge={id => action(id, "acknowledge")} onResolve={(id, reason) => action(id, "resolve", { reason })}
       onDismiss={(id, reason) => action(id, "dismiss", { reason })}
