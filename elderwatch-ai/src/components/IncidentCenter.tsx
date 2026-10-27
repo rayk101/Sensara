@@ -1,12 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
-import EventTimeline from "./EventTimeline";
-interface Notice { id: string; eventId: string; residentId: string; staffId: string; channel: string; status: string; error: string | null }
-export default function IncidentCenter({ onEvents }: { onEvents?: (events: SafetyEvent[]) => void }) {
-  const [patients, setPatients] = useState<Array<{ patientId: string; name: string; room: string; priority: string; observed: string; health: string }>>([]);
+import EventTimeline, { type IncidentNotice } from "./EventTimeline";
+export default function IncidentCenter({ onEvents, showHistory = false }: { onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean }) {
   const [events, setEvents] = useState<SafetyEvent[]>([]);
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const [notices, setNotices] = useState<IncidentNotice[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -18,13 +16,13 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
   const processing = useRef(false);
   const refresh = useCallback(async () => {
     try {
-      const [er, nr, pr] = await Promise.all([fetch("/api/events?limit=100"), fetch("/api/notifications"), fetch("/api/observations")]);
-      if (!er.ok || !nr.ok || !pr.ok) throw new Error("Incident history is unavailable. Monitoring results may not be saved.");
-      const [e, n, p] = await Promise.all([er.json(), nr.json(), pr.json()]); setPatients(p.patients); setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError(""); setLoaded(true);
+      const [er, nr] = await Promise.all([fetch("/api/events?limit=100"), fetch("/api/notifications")]);
+      if (!er.ok || !nr.ok) throw new Error("Incident history is unavailable. Monitoring results may not be saved.");
+      const [e, n] = await Promise.all([er.json(), nr.json()]); setEvents(e.events); onEvents?.(e.events); setNotices(n.notifications); setError(""); setLoaded(true);
     } catch (e) { setError(e instanceof Error ? e.message : "Connection unavailable"); }
   }, [onEvents]);
   useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 3000); return () => clearInterval(timer); }, [refresh]);
-  const urgent = events.filter(e => e.severity === "urgent" && !["resolved", "dismissed"].includes(e.status ?? ""));
+  const openEvents = events.filter(event => event.severity !== "stable" && !["resolved", "dismissed"].includes(event.status ?? ""));
   const eventKey = events.map(e => `${e._id}:${e.acknowledged}:${e.status}`).join("|");
   useEffect(() => {
     if (!audioEnabled || processing.current) return;
@@ -75,16 +73,38 @@ export default function IncidentCenter({ onEvents }: { onEvents?: (events: Safet
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audioEnabled, eventKey, retry]);
   const action = async (id: string, path: string, body: object = {}) => { const r = await fetch(`/api/events/${id}/${path}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); if (!r.ok) throw new Error((await r.json()).error ?? "Action failed"); await refresh(); };
-  return <section className="rounded-xl border border-sensara-border bg-white p-4">
-    <div className="flex flex-wrap items-center gap-3"><h2 className="font-semibold">Saved incidents</h2><span className={urgent.length ? "font-bold text-red-700" : "text-sm"}>{!loaded ? "Loading saved incident status…" : error ? "Saved incident status unavailable" : urgent.length ? `${urgent.length} unresolved critical incident(s)` : "No unresolved critical incidents"}</span>
-      <button className="rounded border px-3 py-1 text-xs" onClick={() => { audioRef.current ??= new Audio(); setAudioEnabled(v => !v); }}>{audioEnabled ? "Disable audio alerts" : "Enable Audio Alerts"}</button>
-      <button className="rounded border px-3 py-1 text-xs" onClick={() => { if (manualPlayRef.current) { manualPlayRef.current(); return; } seen.current.clear(); setAudioEnabled(true); setRetry(v => v + 1); }}>{voiceStatus.startsWith("Audio blocked") ? "Play blocked alert" : "Retry voice"}</button><span role="status" className={voiceStatus.startsWith("Audio blocked") ? "font-bold text-red-700" : "text-xs"}>{voiceStatus}</span>
-    </div>
-    <details className="my-3"><summary className="cursor-pointer text-sm">Patient priorities ({patients.length})</summary><div className="mt-2 grid grid-cols-1 gap-2">{patients.map(p => <div key={p.patientId} className="rounded border p-2 text-xs"><b>{p.name} · {p.room}</b><p className={p.priority === "URGENT" ? "font-bold text-red-700" : ""}>Priority: {p.priority === "URGENT" ? "CRITICAL" : p.priority}</p><p>Observed: {p.observed === "URGENT" ? "CRITICAL" : p.observed} · Monitoring: {p.health}</p></div>)}</div></details>
-    {error && <p role="alert" className="my-2 font-semibold text-red-700">{error}</p>}
-    <details className="my-3"><summary className="cursor-pointer text-sm">Notification outcomes ({notices.length})</summary>
-      {notices.map(n => <div key={n.id} className="my-1 text-xs">{n.channel} · {n.staffId} · {n.status}{n.error ? ` — ${n.error}` : ""}{["failed", "unknown"].includes(n.status) && n.channel !== "voice" && <button className="ml-2 underline" onClick={async () => { if (n.status === "unknown" && !window.confirm("The provider may already have sent this message. Retry anyway?")) return; const r = await fetch(`/api/notifications/${n.id}/retry`, { method: "POST" }); if (!r.ok) setError((await r.json()).error); await refresh(); }}>Retry</button>}</div>)}
-    </details>
-    <EventTimeline events={events} onAcknowledge={id => action(id, "acknowledge")} onResolve={(id, reason) => action(id, "resolve", { reason })} onDismiss={(id, reason) => action(id, "dismiss", { reason })} onAddNote={async (eventId, residentId, note) => { const r = await fetch(`/api/events/${eventId}/notes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ residentId, note }) }); if (!r.ok) throw new Error("Could not save note"); }} />
+  const retryNotice = async (notice: IncidentNotice) => {
+    if (notice.status === "unknown" && !window.confirm("The provider may already have sent this message. Retry anyway?")) return;
+    const response = await fetch(`/api/notifications/${notice.id}/retry`, { method: "POST" });
+    if (!response.ok) throw new Error((await response.json()).error ?? "Retry failed");
+    await refresh();
+  };
+  return <section className="attention-panel">
+    <header className="attention-header">
+      <h2>{showHistory ? "Incident history" : "Needs attention"}</h2>
+      <div className="attention-header-actions">
+        <button className={`audio-toggle${audioEnabled ? " audio-toggle--enabled" : ""}`} aria-label={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
+          aria-pressed={audioEnabled} title={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
+          onClick={() => { audioRef.current ??= new Audio(); setAudioEnabled(value => !value); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+            <path d="M11 4 6 8H3v8h3l5 4V4Z" strokeLinejoin="round" />
+            {audioEnabled ? <><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14" strokeLinecap="round" /></> : <path d="m16 9 5 6m0-6-5 6" strokeLinecap="round" />}
+          </svg>
+        </button>
+        <span className="open-count" aria-live="polite">{error ? "Unavailable" : !loaded ? "Loading…" : `${openEvents.length} open`}</span>
+      </div>
+    </header>
+    {error && <p role="alert" className="panel-message">{error}</p>}
+    {audioEnabled && <div className="voice-status" role="status"><span>{voiceStatus}</span>
+      <button onClick={() => { if (manualPlayRef.current) { manualPlayRef.current(); return; } seen.current.clear(); setRetry(value => value + 1); }}>{voiceStatus.startsWith("Audio blocked") ? "Play alert" : "Retry voice"}</button>
+    </div>}
+    {loaded && <EventTimeline events={showHistory ? events : openEvents} notifications={notices} onRetryNotification={retryNotice}
+      emptyMessage={showHistory ? "No saved incidents" : "No incidents need attention"}
+      onAcknowledge={id => action(id, "acknowledge")} onResolve={(id, reason) => action(id, "resolve", { reason })}
+      onDismiss={(id, reason) => action(id, "dismiss", { reason })}
+      onAddNote={async (eventId, residentId, note) => {
+        const response = await fetch(`/api/events/${eventId}/notes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ residentId, note }) });
+        if (!response.ok) throw new Error("Could not save note");
+      }} />}
   </section>;
 }

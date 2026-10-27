@@ -1,10 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import SafetyBadge from "./SafetyBadge";
+import { residentDisplayName } from "@/lib/residentDisplay";
 import type { SafetyEvent } from "@/lib/types";
 
+export interface IncidentNotice {
+  id: string; eventId: string; residentId: string; staffId: string; channel: string; status: string; error: string | null;
+}
+
 interface EventTimelineProps {
+  notifications?: IncidentNotice[];
+  onRetryNotification?: (notice: IncidentNotice) => Promise<void>;
+  emptyMessage?: string;
   events: SafetyEvent[];
   onResolve?: (eventId: string, reason: string) => Promise<void>;
   onDismiss?: (eventId: string, reason: string) => Promise<void>;
@@ -26,34 +33,6 @@ const EVENT_LABELS: Record<string, string> = {
   possible_choking: "Possible Choking",
   normal: "Normal",
 };
-
-const EVENT_ICONS: Record<string, string> = {
-  fall_risk: "⚠️",
-  possible_fall: "🚨",
-  immobility: "🛑",
-  wandering: "🚶",
-  unsafe_posture: "↗️",
-  seizure_like_motion: "⚡",
-  out_of_frame: "👁️",
-  audio_distress: "🎙️",
-  possible_distress_sound: "🔊",
-  possible_fall_sound: "💥",
-  possible_choking: "🫁",
-  normal: "✅",
-};
-
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
-  return `${Math.round(diff / 86400000)}d ago`;
-}
 
 // ─── Video clip viewer modal ──────────────────────────────────────────────────
 function VideoClipModal({
@@ -91,7 +70,7 @@ function VideoClipModal({
       onClick={onClose}
     >
       <div
-        className="relative bg-white border border-sensara-border rounded-xl p-4 max-w-2xl w-full mx-4 shadow-2xl"
+        role="dialog" aria-modal="true" aria-label="Incident video clip" className="relative bg-white border border-sensara-border rounded-xl p-4 max-w-2xl w-full mx-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
@@ -100,7 +79,7 @@ function VideoClipModal({
           </h3>
           <button
             onClick={onClose}
-            className="text-sensara-warm-500 hover:text-sensara-forest-900 text-lg leading-none"
+            aria-label="Close video clip" className="text-sensara-warm-500 hover:text-sensara-forest-900 text-lg leading-none"
           >
             ✕
           </button>
@@ -128,195 +107,99 @@ function VideoClipModal({
           />
         )}
 
-        <p className="text-[10px] text-sensara-warm-400 mt-2 text-center">
-          ⚠️ Prototype only. Not for clinical use. All data is mock/demo data.
-        </p>
       </div>
     </div>
   );
 }
 
-export default function EventTimeline({ events, onAcknowledge, onAddNote, onResolve, onDismiss }: EventTimelineProps) {
+const SEVERITY_LABELS: Record<string, string> = { urgent: "Critical", assist: "Needs assistance", watch: "Watching", stable: "Stable" };
+const CHANNEL_LABELS: Record<string, string> = { photon: "iMessage", imessage: "iMessage", sms: "SMS", email: "Email", voice: "Voice" };
+const readable = (value: string) => value.replace(/_/g, " ");
+
+export default function EventTimeline({ events, onAcknowledge, onAddNote, onResolve, onDismiss, notifications = [], onRetryNotification, emptyMessage = "No saved incidents" }: EventTimelineProps) {
   const [closureReason, setClosureReason] = useState<Record<string, string>>({});
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState<Record<string, string>>({});
   const [viewingClip, setViewingClip] = useState<{ clipId: string; label: string } | null>(null);
+  const deduplicated = events.filter((event, index, all) => all.findIndex(other => other._id === event._id) === index);
 
-  const deduplicated = events.filter(
-    (e, i, arr) => arr.findIndex((x) => x._id === e._id) === i
-  );
+  const perform = async (id: string, action: () => Promise<void>) => {
+    setPendingId(id); setActionMessage(null);
+    try { await action(); }
+    catch (error) { setActionMessage(error instanceof Error ? error.message : "Action failed. Please retry."); }
+    finally { setPendingId(null); }
+  };
 
-  return (
-    <>
-      {actionMessage && <p role="status" className="text-xs mb-2">{actionMessage}</p>}
-      <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-        {deduplicated.length === 0 && (
-          <p className="text-sensara-warm-500 text-sm text-center py-6">
-            No saved events yet
-          </p>
-        )}
-
-        {deduplicated.map((event) => {
-          const isExpanded = expandedId === event._id;
-          const isNonStable = event.severity !== "stable";
-
-          return (
-            <div
-              key={event._id}
-              className={`rounded-lg border transition-all duration-200 animate-fade-in
-                ${event.severity === "urgent" ? "border-red-300 bg-red-50" :
-                  event.severity === "assist" ? "border-orange-300 bg-orange-50" :
-                  event.severity === "watch" ? "border-yellow-300 bg-yellow-50" :
-                  "border-sensara-divider bg-sensara-warm-100/60"}`}
-            >
-              {/* Event summary row */}
-              <button
-                onClick={() => setExpandedId(isExpanded ? null : (event._id ?? null))}
-                className="w-full text-left px-3 py-2.5 flex items-start gap-3"
-              >
-                <span className="text-base mt-0.5 shrink-0">{EVENT_ICONS[event.eventType] ?? "•"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <SafetyBadge severity={event.severity} size="sm" />
-                    <span className="text-sensara-forest-900 text-sm font-medium">
-                      {EVENT_LABELS[event.eventType] ?? event.eventType}
-                    </span>
-                    {event.acknowledged && (
-                      <span className="text-[10px] bg-green-100 text-green-700 border border-green-300 rounded-full px-1.5 py-0.5">
-                        {event.status === "resolved" ? "Resolved" : event.status === "dismissed" ? "Dismissed" : "✓ Acknowledged"}
-                      </span>
-                    )}
-                    {event.source === "audio_monitor" && (
-                      <span className="text-[10px] bg-purple-100 text-purple-700 border border-purple-300 rounded-full px-1.5 py-0.5">
-                        🎙️ Audio
-                      </span>
-                    )}
-                    {event.hasVideoClip && (
-                      <span className="text-[10px] bg-sensara-forest-100 text-sensara-forest-700 border border-sensara-forest-200 rounded-full px-1.5 py-0.5">
-                        📹 Video Clip
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sensara-warm-700 text-xs mt-0.5 truncate">{event.reason}</p>
-                </div>
-                <div className="text-right shrink-0 text-[10px] text-sensara-warm-600">
-                  <div>{formatTimestamp(event.createdAt)}</div>
-                  <div className="text-sensara-warm-400">{formatRelative(event.createdAt)}</div>
-                </div>
-              </button>
-
-              {/* Expanded detail */}
-              {isExpanded && (
-                <div className="px-3 pb-3 border-t border-sensara-divider pt-2 space-y-2 animate-fade-in">
-                  <p className="text-sensara-forest-800 text-xs">{event.reason}</p>
-
-                  {event.audioTranscript && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5">
-                      <p className="text-[9px] text-purple-600 mb-0.5">Transcript</p>
-                      <p className="text-xs text-purple-800 italic">&ldquo;{event.audioTranscript}&rdquo;</p>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-sensara-warm-600">
-                    <span>{event.confidence > 0 ? <>Heuristic score: <b className="text-sensara-forest-900">{Math.round(event.confidence * 100)}/100</b></> : "Movement rule — no calibrated probability"}</span>
-                    <span>Posture: <b className="text-sensara-forest-900">{Math.round(event.signals?.postureAngle ?? 0)}°</b></span>
-                    <span>Still: <b className="text-sensara-forest-900">{Math.round(event.signals?.secondsStill ?? 0)}s</b></span>
-                  </div>
-
-                  {/* View Clip button */}
-                  {event.hasVideoClip && event.videoClipId && (
-                    <button
-                      onClick={() =>
-                        setViewingClip({
-                          clipId: event.videoClipId!,
-                          label: event.videoClip?.fileName ?? EVENT_LABELS[event.eventType] ?? event.eventType,
-                        })
-                      }
-                      className="w-full text-xs bg-sensara-forest-700 hover:bg-sensara-forest-600 text-white border border-sensara-forest-500 rounded-lg py-1.5 transition-colors"
-                    >
-                      📹 View Clip{event.videoClip?.fileName ? ` · ${event.videoClip.fileName}` : ""}
-                    </button>
-                  )}
-
-                  {event.workflow && <div className="rounded border p-2 text-xs" aria-label="Integration progress">
-                    <p>Video: {event.workflow.video.status.replace(/_/g, " ")}{event.workflow.video.error ? ` — ${event.workflow.video.error}` : ""}</p>
-                    <p>Voice generation: {event.workflow.voice.status.replace(/_/g, " ")}{event.workflow.voice.error ? ` — ${event.workflow.voice.error}` : ""}</p>
-                    <p>Messaging intent: {event.workflow.messaging.status === "configuration_failed" ? "No authorized recipient configured" : event.workflow.messaging.status.replace(/_/g, " ")}. Recipient outcomes are listed above.</p>
-                  </div>}
-                  <p className="text-xs">Response: {event.status ?? (event.acknowledged ? "acknowledged" : "open")}</p>
-                  {!["resolved", "dismissed"].includes(event.status ?? "") && (onResolve || onDismiss) && <div className="space-y-2">
-                    <label className="block text-xs">Closure reason<input className="mt-1 block w-full rounded border p-2" maxLength={2000} value={closureReason[event._id!] ?? ""} onChange={e => setClosureReason(prev => ({ ...prev, [event._id!]: e.target.value }))} /></label>
-                    <div className="flex gap-2">
-                      {event.acknowledged && onResolve && <button disabled={!closureReason[event._id!]?.trim() || pendingId === event._id} className="rounded border px-2 py-1 text-xs disabled:opacity-40" onClick={async () => { setPendingId(event._id!); try { await onResolve(event._id!, closureReason[event._id!]); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Resolution failed"); } finally { setPendingId(null); } }}>Resolve</button>}
-                      {onDismiss && <button disabled={!closureReason[event._id!]?.trim() || pendingId === event._id} className="rounded border px-2 py-1 text-xs disabled:opacity-40" onClick={async () => { setPendingId(event._id!); try { await onDismiss(event._id!, closureReason[event._id!]); } catch (e) { setActionMessage(e instanceof Error ? e.message : "Dismissal failed"); } finally { setPendingId(null); } }}>Dismiss</button>}
-                    </div>
-                  </div>}
-                  {/* Acknowledge button */}
-                  {isNonStable && !event.acknowledged && !["resolved", "dismissed"].includes(event.status ?? "") && event._id && (
-                    <button
-                      disabled={pendingId === event._id}
-                      onClick={async () => {
-                        setPendingId(event._id!);
-                        setActionMessage(null);
-                        try { await onAcknowledge(event._id!); }
-                        catch { setActionMessage("Could not acknowledge alert. Please try again."); }
-                        finally { setPendingId(null); }
-                      }}
-                      className="w-full text-xs bg-sensara-warm-100 hover:bg-sensara-warm-200 text-sensara-forest-800 border border-sensara-border rounded-lg py-1.5 transition-colors"
-                    >
-                      ✓ Acknowledge Alert
-                    </button>
-                  )}
-
-                  {/* Caregiver note input */}
-                  {event._id && (
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={noteText[event._id] ?? ""}
-                        onChange={(e) =>
-                          setNoteText((prev) => ({ ...prev, [event._id!]: e.target.value }))
-                        }
-                        placeholder="Add caregiver note…"
-                        className="flex-1 text-xs bg-white text-sensara-forest-900 rounded-lg px-2 py-1.5 border border-sensara-border focus:outline-none focus:ring-1 focus:ring-sensara-forest-500"
-                      />
-                      <button
-                        disabled={pendingId === event._id}
-                        onClick={async () => {
-                          const note = noteText[event._id!]?.trim();
-                          if (note && event._id) {
-                            setPendingId(event._id);
-                            setActionMessage(null);
-                            try {
-                              await onAddNote(event._id, event.residentId, note);
-                              setNoteText(prev => ({ ...prev, [event._id!]: "" }));
-                              setActionMessage("Note saved.");
-                            } catch { setActionMessage("Could not save note. Please try again."); }
-                            finally { setPendingId(null); }
-                          }
-                        }}
-                        className="text-xs bg-sensara-forest-700 hover:bg-sensara-forest-600 text-white rounded-lg px-2.5 py-1.5 transition-colors"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  )}
-                </div>
+  return <>
+    {actionMessage && <p role="status" className="panel-message">{actionMessage}</p>}
+    <div className="incident-list custom-scrollbar">
+      {deduplicated.length === 0 && <p className="incident-empty">{emptyMessage}</p>}
+      {deduplicated.map(event => {
+        const id = event._id ?? "";
+        const expanded = expandedId === id;
+        const closed = ["resolved", "dismissed"].includes(event.status ?? "");
+        const notices = notifications.filter(notice => notice.eventId === id);
+        return <article key={id} className="incident-item">
+          <button className="incident-summary" aria-expanded={expanded} aria-controls={`incident-${id}`}
+            onClick={() => setExpandedId(expanded ? null : id)}>
+            <span className={`incident-badge incident-badge--${closed ? "stable" : event.severity}`}>
+              {closed ? readable(event.status!) : SEVERITY_LABELS[event.severity]}
+            </span>
+            <h3>{EVENT_LABELS[event.eventType] ?? readable(event.eventType)}</h3>
+            <p className="incident-room">{event.room}</p>
+            <p className="incident-resident">{residentDisplayName(event.residentId, event.residentName)}</p>
+            <p className="incident-description">{event.reason}</p>
+          </button>
+          {expanded && <div className="incident-detail" id={`incident-${id}`}>
+            <div className="incident-meta"><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time>
+              <span>{readable(event.status ?? (event.acknowledged ? "acknowledged" : "open"))}</span></div>
+            {event.audioTranscript && <p className="incident-transcript">“{event.audioTranscript}”</p>}
+            {event.workflow && <div className="notification-progress" aria-label="Notification progress">
+              <p><span>Video</span><span>{readable(event.workflow.video.status)}</span></p>
+              {event.workflow.video.error && <p className="notification-error">{event.workflow.video.error}</p>}
+              <p><span>Voice</span><span>{readable(event.workflow.voice.status)}</span></p>
+              {event.workflow.voice.error && <p className="notification-error">{event.workflow.voice.error}</p>}
+              <p><span>Messages</span><span>{event.workflow.messaging.status === "configuration_failed" ? "No recipient configured" : readable(event.workflow.messaging.status)}</span></p>
+              {event.workflow.messaging.error && <p className="notification-error">{event.workflow.messaging.error}</p>}
+            </div>}
+            {notices.map(notice => <div key={notice.id} className="notification-result">
+              <span>{CHANNEL_LABELS[notice.channel] ?? notice.channel} · {notice.staffId}</span>
+              <span>{readable(notice.status)}</span>
+              {notice.error && <p className="notification-error">{notice.error}</p>}
+              {["failed", "unknown"].includes(notice.status) && notice.channel !== "voice" && onRetryNotification && (
+                <button className="text-action" disabled={pendingId === id} onClick={() => void perform(id, () => onRetryNotification(notice))}>Retry</button>
               )}
+            </div>)}
+            <div className="incident-actions">
+              {event.hasVideoClip && event.videoClipId && <button className="quiet-button"
+                onClick={() => setViewingClip({ clipId: event.videoClipId!, label: EVENT_LABELS[event.eventType] ?? event.eventType })}>View clip</button>}
+              {!closed && event.severity !== "stable" && !event.acknowledged && id && <button className="quiet-button" disabled={pendingId === id}
+                onClick={() => void perform(id, () => onAcknowledge(id))}>Acknowledge</button>}
             </div>
-          );
-        })}
-      </div>
-
-      {viewingClip && (
-        <VideoClipModal
-          clipId={viewingClip.clipId}
-          eventLabel={viewingClip.label}
-          onClose={() => setViewingClip(null)}
-        />
-      )}
-    </>
-  );
+            {!closed && (onResolve || onDismiss) && <div className="incident-closure">
+              <label>Closure reason<input value={closureReason[id] ?? ""} maxLength={2000}
+                onChange={change => setClosureReason(previous => ({ ...previous, [id]: change.target.value }))} /></label>
+              <div className="incident-actions">
+                {event.acknowledged && onResolve && <button className="quiet-button" disabled={!closureReason[id]?.trim() || pendingId === id}
+                  onClick={() => void perform(id, () => onResolve(id, closureReason[id]))}>Resolve</button>}
+                {onDismiss && <button className="quiet-button" disabled={!closureReason[id]?.trim() || pendingId === id}
+                  onClick={() => void perform(id, () => onDismiss(id, closureReason[id]))}>Dismiss</button>}
+              </div>
+            </div>}
+            {id && <form className="incident-note" onSubmit={submit => {
+              submit.preventDefault(); const note = noteText[id]?.trim();
+              if (note) void perform(id, async () => { await onAddNote(id, event.residentId, note); setNoteText(previous => ({ ...previous, [id]: "" })); setActionMessage("Note saved."); });
+            }}>
+              <input aria-label="Caregiver note" placeholder="Add a note…" value={noteText[id] ?? ""}
+                onChange={change => setNoteText(previous => ({ ...previous, [id]: change.target.value }))} />
+              <button className="quiet-button" disabled={!noteText[id]?.trim() || pendingId === id}>Save</button>
+            </form>}
+          </div>}
+        </article>;
+      })}
+    </div>
+    {viewingClip && <VideoClipModal clipId={viewingClip.clipId} eventLabel={viewingClip.label} onClose={() => setViewingClip(null)} />}
+  </>;
 }
