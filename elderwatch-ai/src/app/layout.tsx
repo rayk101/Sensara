@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "../../public/button-shape.css";
 
 export const metadata: Metadata = {
   title: "Sensara — Visual Safety Monitoring",

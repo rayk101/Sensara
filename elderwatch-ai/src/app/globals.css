@@ -207,21 +207,6 @@ canvas {
 .live-settings > label { display: flex; flex-direction: column; gap: 6px; margin-block: 14px; }
 .live-settings select { min-width: 0; width: 100%; border: 1px solid #d5dedc; border-radius: 7px; background: white; padding: 9px; }
 .live-zone-options { display: flex; justify-content: space-between; gap: 12px; margin-block: 16px; }
-.command-layout--live .live-sidebar-content { background: white; border: 1px solid var(--command-line); border-radius: 14px; overflow: hidden; }
-.live-resident-details { flex-shrink: 0; padding: 20px; }
-.live-resident-details h2 { font-size: 18px; line-height: 1.3; font-weight: 600; margin: 0 0 18px; }
-.live-resident-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
-.live-resident-stats > div { padding: 13px; background: #faf8f5; border-radius: 12px; }
-.live-resident-stats dt { color: var(--command-muted); font-size: 14px; margin-bottom: 8px; }
-.live-resident-stats dd { color: var(--command-ink); font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
-.live-resident-conditions { margin-top: 18px; }
-.live-resident-conditions h3 { color: var(--command-muted); font-size: 14px; font-weight: 400; margin-bottom: 8px; }
-.live-resident-conditions > div { display: flex; align-items: flex-start; flex-direction: column; gap: 8px; }
-.live-resident-conditions .risk-badge { white-space: normal; }
-.live-care-note { margin-top: 18px; padding: 13px; background: #fdf6e9; border-radius: 12px; }
-.live-care-note h3 { color: #ae8040; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-.live-care-note p { margin: 0; color: var(--command-muted); font-size: 14px; line-height: 1.5; }
-.command-layout--live .attention-panel { min-width: 0; border: 0; border-top: 1px solid var(--command-line); border-radius: 0; }
 .command-layout--live .attention-header { flex-shrink: 0; min-height: 52px; padding: 12px 20px; }
 .command-layout--live .attention-header h2 { font-size: 18px; }
 .command-layout--live .open-count { font-size: 13px; padding: 4px 10px; }

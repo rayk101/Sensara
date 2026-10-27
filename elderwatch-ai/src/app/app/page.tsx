@@ -12,7 +12,6 @@ import { useVideoRecorder, type LiveCaptureTrigger } from "@/hooks/useVideoRecor
 import RecordingNotice from "@/components/RecordingNotice";
 import AudioMonitor from "@/components/AudioMonitor";
 import MultiFeedDemo from "@/components/MultiFeedDemo";
-import LiveResidentDetails from "@/components/LiveResidentDetails";
 import { useDemoControls } from "@/hooks/useDemoControls";
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
 import { residentDisplayName } from "@/lib/residentDisplay";
@@ -130,12 +129,9 @@ export default function Dashboard() {
               enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} onPause={() => setIsPaused(true)} />
           </div>
         </div>
-        <aside className="command-sidebar" aria-label={mainTab === "live-camera" ? "Resident details and notifications" : "Alerts and notifications"}>
-          <div className="live-sidebar-content">
-            {mainTab === "live-camera" && <LiveResidentDetails key={selectedResident.id} resident={selectedResident} />}
-            <IncidentCenter showHistory={mainTab === "reports"} residentId={mainTab === "live-camera" ? selectedResident.id : undefined}
-              title={mainTab === "live-camera" ? "Notifications" : undefined} />
-          </div>
+        <aside className="command-sidebar" aria-label="Alerts and notifications">
+          <IncidentCenter showHistory={mainTab === "reports"} residentId={mainTab === "live-camera" ? selectedResident.id : undefined}
+            title={mainTab === "live-camera" ? "Notifications" : undefined} />
         </aside>
       </div>
     </main>

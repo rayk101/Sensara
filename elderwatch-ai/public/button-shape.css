@@ -1,0 +1,14 @@
+:root {
+  --senserra-button-radius: 8px;
+}
+
+/* One button shape across the application and landing page. Override existing
+   component radius utilities while preserving colors, spacing, and states. */
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+a.button {
+  border-radius: var(--senserra-button-radius) !important;
+}
