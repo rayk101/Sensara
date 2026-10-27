@@ -31,6 +31,9 @@ interface PoseCameraProps {
   onSafeZoneChange?: (zone: SafeZone) => void;
   /** Used to show the subtle "Outside zone…" indicator */
   insideSafeZone?: boolean;
+  presentation?: "standard" | "live";
+  detectionLabel?: string;
+  monitoringError?: string | null;
 }
 
 // "left"/"right" refer to display-left and display-right (the mirrored view).
@@ -71,7 +74,11 @@ export default function PoseCamera({
   editMode = false,
   onSafeZoneChange,
   insideSafeZone = true,
+  presentation = "standard",
+  detectionLabel,
+  monitoringError,
 }: PoseCameraProps) {
+  const livePresentation = presentation === "live";
   const drawingRef = useRef<number>(0);
   const dragRef = useRef<DragState | null>(null);
 
@@ -89,11 +96,21 @@ export default function PoseCamera({
     const canvas = canvasRef.current;
     if (!canvas) return { nx: 0, ny: 0 };
     const rect = canvas.getBoundingClientRect();
+    if (livePresentation) {
+      // The live viewport contains the complete camera image without stretching.
+      // Map pointer coordinates through any letterboxing for safe-zone editing.
+      const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+      const width = canvas.width * scale, height = canvas.height * scale;
+      return {
+        nx: (clientX - rect.left - (rect.width - width) / 2) / width,
+        ny: (clientY - rect.top - (rect.height - height) / 2) / height,
+      };
+    }
     return {
       nx: (clientX - rect.left) / rect.width,
       ny: (clientY - rect.top) / rect.height,
     };
-  }, [canvasRef]);
+  }, [canvasRef, livePresentation]);
 
   // ── Pointer down: hit-test left/right edge handles then interior ──────────────
   // nx is in display (mirrored) coordinates: 0=left edge of canvas, 1=right.
@@ -192,11 +209,11 @@ export default function PoseCamera({
       const dRight = (1 - sz.x) * W;
 
       // Semi-transparent fill between the lines
-      ctx.fillStyle = inEdit ? "rgba(34, 197, 94, 0.08)" : SAFE_ZONE_COLOR;
+      ctx.fillStyle = livePresentation ? "rgba(166, 197, 203, 0.06)" : inEdit ? "rgba(34, 197, 94, 0.08)" : SAFE_ZONE_COLOR;
       ctx.fillRect(dLeft, 0, dRight - dLeft, H);
 
       // Vertical boundary lines
-      ctx.strokeStyle = inEdit ? SAFE_ZONE_EDIT_BORDER : SAFE_ZONE_BORDER;
+      ctx.strokeStyle = livePresentation ? "#a6c5cb" : inEdit ? SAFE_ZONE_EDIT_BORDER : SAFE_ZONE_BORDER;
       ctx.lineWidth = inEdit ? 2.5 : 2;
       ctx.setLineDash([8, 4]);
       ctx.beginPath(); ctx.moveTo(dLeft,  0); ctx.lineTo(dLeft,  H); ctx.stroke();
@@ -209,10 +226,10 @@ export default function PoseCamera({
       if (inEdit) {
         ctx.fillStyle = SAFE_ZONE_EDIT_BORDER;
         ctx.fillText("← drag edges →", midX - 48, 16);
-      } else if (!inZone) {
+      } else if (!inZone && !livePresentation) {
         ctx.fillStyle = "rgba(234, 179, 8, 0.9)";
         ctx.fillText("Outside zone…", dLeft + 6, 16);
-      } else {
+      } else if (!livePresentation) {
         ctx.fillStyle = SAFE_ZONE_BORDER;
         ctx.fillText("SAFE ZONE", midX - 30, 16);
       }
@@ -238,7 +255,7 @@ export default function PoseCamera({
         const mirrorX = (x: number) => 1 - x;
 
         // Draw bone connections
-        ctx.strokeStyle = SKELETON_COLOR;
+        ctx.strokeStyle = livePresentation ? "#a6c5cb" : SKELETON_COLOR;
         ctx.lineWidth = 2.5;
         ctx.lineCap = "round";
         ctx.setLineDash([]);
@@ -264,9 +281,9 @@ export default function PoseCamera({
           if (lm.visibility !== undefined && lm.visibility < 0.3) continue;
           ctx.beginPath();
           ctx.arc(mirrorX(lm.x) * W, lm.y * H, 4, 0, 2 * Math.PI);
-          ctx.fillStyle = JOINT_COLOR;
+          ctx.fillStyle = livePresentation ? "#d3e4e6" : JOINT_COLOR;
           ctx.fill();
-          ctx.strokeStyle = "#1e40af";
+          ctx.strokeStyle = livePresentation ? "#6fa5ac" : "#1e40af";
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -298,7 +315,7 @@ export default function PoseCamera({
       }
 
       // 5. Show a severity chip only when there is a current observation.
-      if (observationAvailable && status === "running") {
+      if (!livePresentation && observationAvailable && status === "running") {
         const chipLabel = severity === "watch" ? "WATCHING" : severity === "urgent" ? "CRITICAL" : severity.toUpperCase();
         ctx.fillStyle = "rgba(0,0,0,0.65)";
         ctx.beginPath();
@@ -318,7 +335,7 @@ export default function PoseCamera({
     // landmarks/safeZone/severity are read via refs so this effect only needs
     // to restart when the canvas/video refs change (which never happens).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [landmarks, safeZone, severity, observationAvailable, status, editMode, insideSafeZone, videoRef, canvasRef]);
+  }, [landmarks, safeZone, severity, observationAvailable, status, editMode, insideSafeZone, videoRef, canvasRef, livePresentation]);
 
   // ── Status overlay messages ────────────────────────────────────────────────
   const overlayContent = (() => {
@@ -352,6 +369,36 @@ export default function PoseCamera({
     }
     return null;
   })();
+
+  if (livePresentation) {
+    const cameraUnavailable = status === "no-webcam" || status === "error";
+    const available = status === "running" && observationAvailable && !monitoringError;
+    const label = status === "idle" ? "Paused" : cameraUnavailable ? "Camera unavailable" : monitoringError ? "Monitoring unavailable"
+      : status === "loading" ? "Connecting" : !observationAvailable ? "Tracking unavailable" : detectionLabel ?? "Monitoring";
+    return <div className="live-camera-stage" aria-label="Live camera feed">
+      <video ref={videoRef} className="hidden" playsInline muted autoPlay />
+      <canvas ref={canvasRef} className="live-camera-canvas" aria-label="Camera preview with body tracking and safe zone"
+        style={{ cursor: editMode ? "crosshair" : "default" }}
+        onPointerDown={editMode ? handlePointerDown : undefined} onPointerMove={editMode ? handlePointerMove : undefined}
+        onPointerUp={editMode ? handlePointerUp : undefined} onPointerLeave={editMode ? handlePointerUp : undefined} />
+      <div className="live-camera-status">
+        <span className={`feed-badge feed-badge--${available ? severity : "unknown"}`} role="status">{label}</span>
+        <span className="live-source">{status === "running" ? "LIVE" : status === "idle" ? "PAUSED" : "CONNECTING"}</span>
+      </div>
+      {(status === "idle" || cameraUnavailable) && <div className="live-camera-placeholder">
+        <svg viewBox="0 0 32 28" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="2" y="5" width="20" height="18" rx="3" /><path d="m22 11 9-5v16l-9-5" strokeLinejoin="round" /></svg>
+        <p>{status === "idle" ? "Camera paused" : errorMessage || "Camera unavailable"}</p>
+        {cameraUnavailable && onRetry && <button className="live-retry" onClick={onRetry}>Retry camera</button>}
+      </div>}
+      {status === "loading" && <div className="live-loading" role="status"><span className="live-loading-spinner" />{errorMessage || "Starting camera…"}
+        {errorMessage && onRetry && <button onClick={onRetry}>Retry camera</button>}
+      </div>}
+      {monitoringError && !cameraUnavailable && <div className="live-monitor-error" role="alert">{monitoringError} {onRetry && <button onClick={onRetry}>Reconnect</button>}</div>}
+      <div className="live-camera-legend" aria-label="Camera overlay legend">
+        <span><i />Body tracking</span><span><i className="safe-zone-line" />Safe zone</span>
+      </div>
+    </div>;
+  }
 
   return (
     <div className="relative w-full rounded-xl overflow-hidden bg-gray-900 border border-gray-700">

@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
 import EventTimeline, { type IncidentNotice } from "./EventTimeline";
-export default function IncidentCenter({ onEvents, showHistory = false }: { onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean }) {
+export default function IncidentCenter({ onEvents, showHistory = false, residentId, title }: {
+  onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean; residentId?: string; title?: string;
+}) {
   const [events, setEvents] = useState<SafetyEvent[]>([]);
   const [notices, setNotices] = useState<IncidentNotice[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -22,7 +24,8 @@ export default function IncidentCenter({ onEvents, showHistory = false }: { onEv
     } catch (e) { setError(e instanceof Error ? e.message : "Connection unavailable"); }
   }, [onEvents]);
   useEffect(() => { void refresh(); const timer = setInterval(() => { void refresh(); }, 3000); return () => clearInterval(timer); }, [refresh]);
-  const openEvents = events.filter(event => event.severity !== "stable" && !["resolved", "dismissed"].includes(event.status ?? ""));
+  const displayedEvents = residentId ? events.filter(event => event.residentId === residentId) : events;
+  const openEvents = displayedEvents.filter(event => event.severity !== "stable" && !["resolved", "dismissed"].includes(event.status ?? ""));
   const eventKey = events.map(e => `${e._id}:${e.acknowledged}:${e.status}`).join("|");
   useEffect(() => {
     if (!audioEnabled || processing.current) return;
@@ -81,7 +84,7 @@ export default function IncidentCenter({ onEvents, showHistory = false }: { onEv
   };
   return <section className="attention-panel">
     <header className="attention-header">
-      <h2>{showHistory ? "Incident history" : "Needs attention"}</h2>
+      <h2>{title ?? (showHistory ? "Incident history" : "Needs attention")}</h2>
       <div className="attention-header-actions">
         <button className={`audio-toggle${audioEnabled ? " audio-toggle--enabled" : ""}`} aria-label={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
           aria-pressed={audioEnabled} title={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
@@ -98,7 +101,7 @@ export default function IncidentCenter({ onEvents, showHistory = false }: { onEv
     {audioEnabled && <div className="voice-status" role="status"><span>{voiceStatus}</span>
       <button onClick={() => { if (manualPlayRef.current) { manualPlayRef.current(); return; } seen.current.clear(); setRetry(value => value + 1); }}>{voiceStatus.startsWith("Audio blocked") ? "Play alert" : "Retry voice"}</button>
     </div>}
-    {loaded && <EventTimeline events={showHistory ? events : openEvents} notifications={notices} onRetryNotification={retryNotice}
+    {loaded && <EventTimeline events={showHistory ? displayedEvents : openEvents} notifications={notices} onRetryNotification={retryNotice}
       emptyMessage={showHistory ? "No saved incidents" : "No incidents need attention"}
       onAcknowledge={id => action(id, "acknowledge")} onResolve={(id, reason) => action(id, "resolve", { reason })}
       onDismiss={(id, reason) => action(id, "dismiss", { reason })}

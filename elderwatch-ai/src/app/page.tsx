@@ -13,6 +13,7 @@ import { useVideoRecorder, type LiveCaptureTrigger } from "@/hooks/useVideoRecor
 import RecordingNotice from "@/components/RecordingNotice";
 import AudioMonitor from "@/components/AudioMonitor";
 import MultiFeedDemo from "@/components/MultiFeedDemo";
+import LiveResidentDetails from "@/components/LiveResidentDetails";
 import { useDemoControls } from "@/hooks/useDemoControls";
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
 import { residentDisplayName } from "@/lib/residentDisplay";
@@ -107,36 +108,46 @@ export default function Dashboard() {
       </div>
     </header>
 
-    <main className="command-shell command-main">
+    <main className={`command-shell command-main${mainTab === "live-camera" ? " live-main" : ""}`}>
+      {mainTab === "live-camera" && <nav className="live-breadcrumb" aria-label="Breadcrumb">
+        <button onClick={() => changeTab("multi-feed")}>Command Center</button>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
+        <span aria-current="page">Live Camera</span>
+      </nav>}
       <div className="command-title-row">
-        <h1>{TABS.find(tab => tab.id === mainTab)?.label}</h1>
-        {mainTab !== "reports" && <button className="monitor-toggle" onClick={toggleMonitoring} aria-describedby="monitoring-consent">
-          {mainTab === "multi-feed" ? (demo.anyRunning ? "Pause feeds" : "Start feeds") : (isPaused ? "Start camera" : "Pause camera")}
+        <h1>{mainTab === "live-camera" ? "Live Camera Feed" : TABS.find(tab => tab.id === mainTab)?.label}</h1>
+        {mainTab === "multi-feed" && <button className="monitor-toggle" onClick={toggleMonitoring} aria-describedby="monitoring-consent">
+          {demo.anyRunning ? "Pause feeds" : "Start feeds"}
         </button>}
       </div>
       <p id="monitoring-consent" className="sr-only">Starting a feed enables monitoring, critical incident recordings and configured alerts.</p>
-      <div className={`command-layout${mainTab === "reports" ? " command-layout--reports" : ""}`}>
+      <div className={`command-layout${mainTab === "reports" ? " command-layout--reports" : mainTab === "live-camera" ? " command-layout--live" : ""}`}>
         <div className="command-feeds" hidden={mainTab === "reports"}>
           <div hidden={mainTab !== "multi-feed"}>
             <MultiFeedDemo residents={residents} runningFeedIds={demo.runningFeedIds} onToggleFeed={demo.toggleFeed} />
           </div>
           <div hidden={mainTab !== "live-camera"}>
             <LiveCamera resident={selectedResident} residents={residents} onSelectResident={setSelectedResidentId}
-              enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} />
+              enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} onPause={() => setIsPaused(true)} />
           </div>
         </div>
-        <aside className="command-sidebar" aria-label="Alerts and notifications">
-          <IncidentCenter showHistory={mainTab === "reports"} />
+        <aside className="command-sidebar" aria-label={mainTab === "live-camera" ? "Resident details and notifications" : "Alerts and notifications"}>
+          <div className="live-sidebar-content">
+            {mainTab === "live-camera" && <LiveResidentDetails key={selectedResident.id} resident={selectedResident} />}
+            <IncidentCenter showHistory={mainTab === "reports"} residentId={mainTab === "live-camera" ? selectedResident.id : undefined}
+              title={mainTab === "live-camera" ? "Notifications" : undefined} />
+          </div>
         </aside>
       </div>
     </main>
   </div>;
 }
 
-function LiveCamera({ resident, residents, onSelectResident, enabled, onStart }: {
-  resident: ResidentProfile; residents: ResidentProfile[]; onSelectResident: (id: string) => void; enabled: boolean; onStart: () => void;
+function LiveCamera({ resident, residents, onSelectResident, enabled, onStart, onPause }: {
+  resident: ResidentProfile; residents: ResidentProfile[]; onSelectResident: (id: string) => void; enabled: boolean; onStart: () => void; onPause: () => void;
 }) {
   const [safeZone, setSafeZone] = useState<SafeZone>(DEFAULT_SAFE_ZONE);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [safeZoneEditMode, setSafeZoneEditMode] = useState(false);
   const [cameraId, setCameraId] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -169,26 +180,32 @@ function LiveCamera({ resident, residents, onSelectResident, enabled, onStart }:
   const restart = () => { setAttempt(value => value + 1); onStart(); retry(); };
 
   return <div className="live-camera-view">
-    <div className="live-selectors">
+    <PoseCamera videoRef={videoRef} canvasRef={canvasRef} landmarks={landmarks} status={status} errorMessage={errorMessage}
+      safeZone={safeZone} severity={classification.severity} observationAvailable={observationAvailable && status === "running" && enabled}
+      onRetry={restart} editMode={safeZoneEditMode && optionsOpen} onSafeZoneChange={handleSafeZoneChange} insideSafeZone={signals.insideSafeZone}
+      presentation="live" detectionLabel={classification.severity === "stable" ? "Monitoring" : classification.severity === "urgent" ? "Critical" : classification.severity === "watch" ? "Watching" : "Needs assistance"}
+      monitoringError={sessionError || persistenceError} />
+    <div className="live-feed-controls">
+      <button className="live-control" onClick={enabled ? onPause : onStart} aria-label={enabled ? "Pause camera" : "Start camera"} title={enabled ? "Pause camera" : "Start camera"}>
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">{enabled ? <path d="M6 5h4v14H6zm8 0h4v14h-4z" /> : <path d="m8 5 11 7-11 7z" />}</svg>
+      </button>
+      <button className="live-control" aria-label="Camera settings" title="Camera settings" aria-expanded={optionsOpen}
+        aria-controls="live-camera-settings" onClick={() => setOptionsOpen(open => !open)}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16" strokeLinecap="round" /><circle cx="9" cy="7" r="3" fill="#2e4651" /><circle cx="15" cy="17" r="3" fill="#2e4651" /></svg>
+      </button>
+    </div>
+    <div id="live-camera-settings" className="live-settings" hidden={!optionsOpen}>
+      <div className="live-settings-title"><h2>Camera settings</h2><button aria-label="Close camera settings" onClick={() => setOptionsOpen(false)}>×</button></div>
       <label>Resident<select value={resident.id} onChange={event => onSelectResident(event.target.value)}>
-        {residents.map(person => <option key={person.id} value={person.id}>{residentDisplayName(person.id, person.name)}</option>)}
+        {residents.map(person => <option key={person.id} value={person.id}>{residentDisplayName(person.id, person.name)} · {person.room}</option>)}
       </select></label>
       <label>Camera<select value={cameraId} onChange={event => setCameraId(event.target.value)}>
         <option value="">Default camera</option>{cameras.map(camera => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || "Camera"}</option>)}
       </select></label>
-    </div>
-    {(sessionError || persistenceError) && <p role="alert" className="connection-message">{sessionError || persistenceError} <button onClick={restart}>Retry</button></p>}
-    <article className="camera-card">
-      <header className="camera-card-header"><div><p>{resident.room}</p><h2>{residentDisplayName(resident.id, resident.name)}</h2></div><span className="risk-badge">{resident.fallRisk} risk</span></header>
-      <PoseCamera videoRef={videoRef} canvasRef={canvasRef} landmarks={landmarks} status={status} errorMessage={errorMessage}
-        safeZone={safeZone} severity={classification.severity} observationAvailable={observationAvailable && status === "running" && enabled}
-        onRetry={restart} editMode={safeZoneEditMode} onSafeZoneChange={handleSafeZoneChange} insideSafeZone={signals.insideSafeZone} />
-    </article>
-    <details className="camera-options"><summary>Camera options</summary>
-      <label><input type="checkbox" checked={safeZoneEditMode} onChange={event => setSafeZoneEditMode(event.target.checked)} /> Edit safe zone</label>
-      <button className="quiet-button" onClick={() => handleSafeZoneChange(DEFAULT_SAFE_ZONE)}>Reset safe zone</button>
+      <div className="live-zone-options"><label><input type="checkbox" checked={safeZoneEditMode} onChange={event => setSafeZoneEditMode(event.target.checked)} /> Edit safe zone</label>
+        <button className="text-action" onClick={() => handleSafeZoneChange(DEFAULT_SAFE_ZONE)}>Reset</button></div>
       <AudioMonitor sessionId={sessionId} resident={resident} isPaused={!enabled} onEventSaved={upsertEvent} onMicStream={setMicStream} />
-    </details>
+    </div>
     <RecordingNotice status={persistenceError && classification.severity === "urgent" ? "error" : recording.recordingStatus}
       message={persistenceError && classification.severity === "urgent" ? persistenceError : recording.statusMessage} />
   </div>;

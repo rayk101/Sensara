@@ -203,3 +203,102 @@ canvas {
   .camera-card, .attention-panel { border-radius: 14px; }
   .live-selectors { flex-direction: column; gap: 12px; }
 }
+
+/* Live Camera — the same visual system, with a full-width camera viewport. */
+.live-breadcrumb { display: flex; align-items: center; gap: 12px; color: var(--command-muted); font-size: 17px; margin-bottom: 16px; line-height: 1.5; }
+.live-breadcrumb button:hover { color: var(--command-ink); }
+.live-breadcrumb svg { width: 15px; height: 15px; }
+.live-main .command-title-row { margin-bottom: 33px; }
+.command-layout--live { align-items: stretch; }
+.live-camera-view { position: relative; }
+.live-camera-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 18px; background: #2e4651; color: #a2b8c0; }
+.live-camera-canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.live-camera-status { position: absolute; top: 28px; left: 28px; right: 29px; display: flex; align-items: center; justify-content: space-between; gap: 16px; pointer-events: none; }
+.live-source { font-size: 16px; color: #a2b8c0; text-shadow: 0 1px 4px #2e4651; }
+.live-camera-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 80px; text-align: center; }
+.live-camera-placeholder svg { width: 40px; height: 34px; }
+.live-camera-placeholder p { max-width: 550px; font-size: 20px; line-height: 1.5; margin: 0; }
+.live-retry { font-size: 15px; border: 1px solid #94afb6; padding: 9px 15px; border-radius: 8px; color: #d4e6e8; }
+.live-camera-legend { position: absolute; right: 29px; bottom: 34px; display: flex; flex-direction: column; gap: 15px; font-size: 17px; text-shadow: 0 1px 4px #2e4651; pointer-events: none; }
+.live-camera-legend span { display: flex; align-items: center; gap: 12px; }
+.live-camera-legend i { display: block; width: 34px; border-top: 2px solid #a6c5cb; }
+.live-camera-legend .safe-zone-line { border-top-style: dashed; }
+.live-feed-controls { position: absolute; bottom: 28px; left: 28px; display: flex; gap: 10px; }
+.live-control { display: grid; place-items: center; width: 36px; height: 36px; color: #c5dadf; border: 1px solid #8ca9b480; background: #2e4651b3; border-radius: 8px; }
+.live-control svg { width: 21px; height: 21px; }
+.live-control:hover, .live-control[aria-expanded="true"] { background: #48656f; }
+.live-loading, .live-monitor-error { position: absolute; left: 28px; bottom: 87px; max-width: calc(100% - 56px); display: flex; align-items: center; gap: 12px; border-radius: 9px; padding: 12px 16px; background: #2e4651e6; color: #d3e3e7; font-size: 14px; }
+.live-monitor-error { color: #f5b29e; }
+.live-monitor-error button, .live-loading button { text-decoration: underline; white-space: nowrap; }
+.live-loading-spinner { flex-shrink: 0; width: 18px; height: 18px; border: 2px solid #a6c5cb55; border-top-color: #a6c5cb; border-radius: 50%; animation: spin 1s linear infinite; }
+.live-settings { position: absolute; bottom: 76px; left: 28px; z-index: 10; width: min(370px, calc(100% - 56px)); max-height: calc(100% - 100px); overflow-y: auto; padding: 20px; border: 1px solid var(--command-line); border-radius: 14px; background: white; box-shadow: 0 8px 30px #182c3326; font-size: 14px; }
+.live-settings-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.live-settings-title h2 { font-size: 17px; font-weight: 600; }
+.live-settings-title button { font-size: 25px; line-height: 1; }
+.live-settings > label { display: flex; flex-direction: column; gap: 6px; margin-block: 14px; }
+.live-settings select { min-width: 0; width: 100%; border: 1px solid #d5dedc; border-radius: 7px; background: white; padding: 9px; }
+.live-zone-options { display: flex; justify-content: space-between; gap: 12px; margin-block: 16px; }
+.command-layout--live > .command-sidebar, .command-layout--live .live-sidebar-content { display: contents; }
+.command-layout--live .live-resident-details { grid-column: 2; grid-row: 1; background: white; border: 1px solid var(--command-line); border-radius: 18px; }
+.live-resident-details { flex-shrink: 0; padding: 28px 27px; }
+.live-resident-details h2 { font-size: 23px; line-height: 1.3; font-weight: 600; margin: 0 0 28px; }
+.live-resident-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
+.live-resident-stats > div { padding: 18px 17px; background: #faf8f5; border-radius: 12px; }
+.live-resident-stats dt { color: var(--command-muted); font-size: 17px; margin-bottom: 12px; }
+.live-resident-stats dd { color: var(--command-ink); font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.live-resident-conditions { margin-top: 29px; }
+.live-resident-conditions h3 { color: var(--command-muted); font-size: 17px; font-weight: 400; margin-bottom: 12px; }
+.live-resident-conditions > div { display: flex; align-items: flex-start; flex-direction: column; gap: 8px; }
+.live-resident-conditions .risk-badge { white-space: normal; }
+.live-care-note { margin-top: 30px; padding: 18px 17px; background: #fdf6e9; border-radius: 12px; }
+.live-care-note h3 { color: #ae8040; font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+.live-care-note p { margin: 0; color: var(--command-muted); font-size: 17px; line-height: 1.5; }
+.command-layout--live .attention-panel { grid-column: 2; grid-row: 2; min-width: 0; }
+.command-layout--live .attention-header { flex-shrink: 0; min-height: 60px; padding: 14px 27px; }
+.command-layout--live .attention-header h2 { font-size: 18px; }
+.command-layout--live .open-count { font-size: 13px; padding: 4px 10px; }
+.command-layout--live .audio-toggle { width: 22px; height: 22px; }
+.command-layout--live .incident-list { min-height: 0; max-height: 420px; overflow-y: auto; }
+.command-layout--live .incident-summary { padding: 17px 27px; }
+.command-layout--live .incident-summary h3 { font-size: 18px; margin-top: 9px; }
+.command-layout--live .incident-room, .command-layout--live .incident-resident { font-size: 14px; }
+.command-layout--live .incident-description { font-size: 15px; }
+.command-layout--live .incident-badge { font-size: 13px; padding: 4px 10px; }
+@media (max-width: 1500px) {
+  .live-breadcrumb { font-size: 15px; margin-bottom: 18px; }
+  .live-main .command-title-row { margin-bottom: 28px; }
+  .live-resident-details { padding: 20px; }
+  .live-resident-details h2 { font-size: 20px; margin-bottom: 18px; }
+  .live-resident-stats { margin-top: 18px; gap: 12px; }
+  .live-resident-stats > div { padding: 13px; }
+  .live-resident-stats dt { font-size: 14px; margin-bottom: 8px; }
+  .live-resident-stats dd { font-size: 17px; }
+  .live-resident-conditions { margin-top: 18px; }
+  .live-resident-conditions h3 { font-size: 14px; margin-bottom: 8px; }
+  .live-care-note { margin-top: 18px; padding: 13px; }
+  .live-care-note h3, .live-care-note p { font-size: 14px; }
+  .command-layout--live .attention-header { padding: 12px 20px; min-height: 52px; }
+  .command-layout--live .incident-summary { padding: 15px 20px; }
+  .live-camera-status { inset: 22px 22px auto; }
+  .live-source { font-size: 14px; }
+  .live-camera-legend { font-size: 14px; right: 22px; bottom: 25px; gap: 10px; }
+  .live-feed-controls { bottom: 22px; left: 22px; }
+}
+@media (max-width: 1100px) {
+  .command-layout--live .live-resident-details, .command-layout--live .attention-panel { grid-column: 1; grid-row: auto; }
+  .command-layout--live .incident-list { max-height: 420px; }
+}
+@media (max-width: 600px) {
+  .live-breadcrumb { font-size: 13px; gap: 8px; margin-bottom: 16px; }
+  .live-camera-stage { min-height: 270px; border-radius: 14px; }
+  .live-camera-status { inset: 16px 16px auto; }
+  .live-camera-placeholder { gap: 15px; padding: 65px 24px; }
+  .live-camera-placeholder p { font-size: 15px; }
+  .live-camera-placeholder svg { width: 32px; height: 28px; }
+  .live-camera-legend { font-size: 12px; gap: 8px; right: 16px; bottom: 19px; }
+  .live-camera-legend i { width: 23px; }
+  .live-feed-controls { left: 16px; bottom: 16px; }
+  .live-control { width: 32px; height: 32px; }
+  .live-settings { left: 16px; bottom: 58px; width: calc(100% - 32px); }
+  .live-loading, .live-monitor-error { left: 16px; bottom: 62px; max-width: calc(100% - 32px); font-size: 12px; }
+}
