@@ -14,7 +14,6 @@ import AudioMonitor from "@/components/AudioMonitor";
 import MultiFeedDemo from "@/components/MultiFeedDemo";
 import { useDemoControls } from "@/hooks/useDemoControls";
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
-import { residentDisplayName } from "@/lib/residentDisplay";
 import type { ResidentProfile, SafetyEvent, SafeZone } from "@/lib/types";
 
 const SAFE_ZONE_KEY = "elderwatch_safe_zone";
@@ -38,6 +37,7 @@ export default function Dashboard() {
   const [mainTab, setMainTab] = useState<MainTab>("multi-feed");
   const [selectedResidentId, setSelectedResidentId] = useState("resident_001");
   const [isPaused, setIsPaused] = useState(true);
+  const [liveAudioEnabled, setLiveAudioEnabled] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
   const [patientError, setPatientError] = useState("");
   const [patientLoadAttempt, setPatientLoadAttempt] = useState(0);
@@ -125,12 +125,14 @@ export default function Dashboard() {
             <MultiFeedDemo residents={residents} runningFeedIds={demo.runningFeedIds} onToggleFeed={demo.toggleFeed} />
           </div>
           <div hidden={mainTab !== "live-camera"}>
-            <LiveCamera resident={selectedResident} residents={residents} onSelectResident={setSelectedResidentId}
-              enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} onPause={() => setIsPaused(true)} />
+            <LiveCamera resident={selectedResident}
+              enabled={mainTab === "live-camera" && !isPaused} onStart={() => setIsPaused(false)} onPause={() => setIsPaused(true)}
+              onAudioEnabledChange={setLiveAudioEnabled} />
           </div>
         </div>
         <aside className="command-sidebar" aria-label="Alerts and notifications">
           <IncidentCenter showHistory={mainTab === "reports"} residentId={mainTab === "live-camera" ? selectedResident.id : undefined}
+            voiceEnabled={mainTab === "live-camera" ? liveAudioEnabled && !isPaused : undefined}
             title={mainTab === "live-camera" ? "Notifications" : undefined} />
         </aside>
       </div>
@@ -138,8 +140,8 @@ export default function Dashboard() {
   </div>;
 }
 
-function LiveCamera({ resident, residents, onSelectResident, enabled, onStart, onPause }: {
-  resident: ResidentProfile; residents: ResidentProfile[]; onSelectResident: (id: string) => void; enabled: boolean; onStart: () => void; onPause: () => void;
+function LiveCamera({ resident, enabled, onStart, onPause, onAudioEnabledChange }: {
+  resident: ResidentProfile; enabled: boolean; onStart: () => void; onPause: () => void; onAudioEnabledChange: (enabled: boolean) => void;
 }) {
   const [safeZone, setSafeZone] = useState<SafeZone>(DEFAULT_SAFE_ZONE);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -148,6 +150,10 @@ function LiveCamera({ resident, residents, onSelectResident, enabled, onStart, o
   const [attempt, setAttempt] = useState(0);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const handleMicStream = useCallback((stream: MediaStream | null) => {
+    setMicStream(stream);
+    onAudioEnabledChange(stream !== null);
+  }, [onAudioEnabledChange]);
   useEffect(() => { setSafeZone(loadSafeZone()); }, []);
   const handleSafeZoneChange = useCallback((zone: SafeZone) => {
     const next = clampSafeZone(zone);
@@ -191,15 +197,12 @@ function LiveCamera({ resident, residents, onSelectResident, enabled, onStart, o
     </div>
     <div id="live-camera-settings" className="live-settings" hidden={!optionsOpen}>
       <div className="live-settings-title"><h2>Camera settings</h2><button aria-label="Close camera settings" onClick={() => setOptionsOpen(false)}>×</button></div>
-      <label>Resident<select value={resident.id} onChange={event => onSelectResident(event.target.value)}>
-        {residents.map(person => <option key={person.id} value={person.id}>{residentDisplayName(person.id, person.name)} · {person.room}</option>)}
-      </select></label>
       <label>Camera<select value={cameraId} onChange={event => setCameraId(event.target.value)}>
         <option value="">Default camera</option>{cameras.map(camera => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || "Camera"}</option>)}
       </select></label>
       <div className="live-zone-options"><label><input type="checkbox" checked={safeZoneEditMode} onChange={event => setSafeZoneEditMode(event.target.checked)} /> Edit safe zone</label>
         <button className="text-action" onClick={() => handleSafeZoneChange(DEFAULT_SAFE_ZONE)}>Reset</button></div>
-      <AudioMonitor sessionId={sessionId} resident={resident} isPaused={!enabled} onEventSaved={upsertEvent} onMicStream={setMicStream} />
+      <AudioMonitor sessionId={sessionId} resident={resident} isPaused={!enabled} onEventSaved={upsertEvent} onMicStream={handleMicStream} />
     </div>
     <RecordingNotice status={persistenceError && classification.severity === "urgent" ? "error" : recording.recordingStatus}
       message={persistenceError && classification.severity === "urgent" ? persistenceError : recording.statusMessage} />

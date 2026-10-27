@@ -2,15 +2,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SafetyEvent } from "@/lib/types";
 import EventTimeline, { type IncidentNotice } from "./EventTimeline";
-export default function IncidentCenter({ onEvents, showHistory = false, residentId, title }: {
-  onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean; residentId?: string; title?: string;
+export default function IncidentCenter({ onEvents, showHistory = false, residentId, title, voiceEnabled }: {
+  onEvents?: (events: SafetyEvent[]) => void; showHistory?: boolean; residentId?: string; title?: string; voiceEnabled?: boolean;
 }) {
   const [events, setEvents] = useState<SafetyEvent[]>([]);
   const [notices, setNotices] = useState<IncidentNotice[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
-  const [audioEnabled, setAudioEnabled] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState("Audio alerts off");
+  const [localAudioEnabled, setAudioEnabled] = useState(false);
+  const audioEnabled = voiceEnabled ?? localAudioEnabled;
+  const [voiceStatus, setVoiceStatus] = useState("Voice alerts ready");
   const [retry, setRetry] = useState(0);
   const manualPlayRef = useRef<(() => void) | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -86,14 +87,14 @@ export default function IncidentCenter({ onEvents, showHistory = false, resident
     <header className="attention-header">
       <h2>{title ?? (showHistory ? "Incident history" : "Needs attention")}</h2>
       <div className="attention-header-actions">
-        <button className={`audio-toggle${audioEnabled ? " audio-toggle--enabled" : ""}`} aria-label={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
+        {voiceEnabled === undefined && <button className={`audio-toggle${audioEnabled ? " audio-toggle--enabled" : ""}`} aria-label={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
           aria-pressed={audioEnabled} title={audioEnabled ? "Disable audio alerts" : "Enable audio alerts"}
           onClick={() => { audioRef.current ??= new Audio(); setAudioEnabled(value => !value); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
             <path d="M11 4 6 8H3v8h3l5 4V4Z" strokeLinejoin="round" />
             {audioEnabled ? <><path d="M15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14" strokeLinecap="round" /></> : <path d="m16 9 5 6m0-6-5 6" strokeLinecap="round" />}
           </svg>
-        </button>
+        </button>}
         <span className="open-count" aria-live="polite">{error ? "Unavailable" : !loaded ? "Loading…" : `${openEvents.length} open`}</span>
       </div>
     </header>

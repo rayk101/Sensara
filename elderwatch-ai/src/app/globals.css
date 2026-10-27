@@ -207,6 +207,16 @@ canvas {
 .live-settings > label { display: flex; flex-direction: column; gap: 6px; margin-block: 14px; }
 .live-settings select { min-width: 0; width: 100%; border: 1px solid #d5dedc; border-radius: 7px; background: white; padding: 9px; }
 .live-zone-options { display: flex; justify-content: space-between; gap: 12px; margin-block: 16px; }
+.elevenlabs-control { padding-top: 16px; border-top: 1px solid var(--command-line); }
+.elevenlabs-control-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--command-ink); font-size: 14px; font-weight: 500; line-height: 1.5; }
+.audio-voice-switch { position: relative; flex-shrink: 0; width: 68px; height: 32px; border: 1px solid #cbd8d5; background: #e8eeec; color: #60756e; transition: background .15s; }
+.audio-voice-switch[aria-checked="true"] { background: #4d938d; border-color: #4d938d; color: white; }
+.audio-voice-switch:disabled { opacity: .5; cursor: not-allowed; }
+.audio-voice-switch-label { position: absolute; inset: 0 7px 0 auto; display: grid; align-items: center; font-size: 12px; }
+.audio-voice-switch[aria-checked="true"] .audio-voice-switch-label { left: 8px; right: auto; }
+.audio-voice-switch-thumb { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 4px; background: white; box-shadow: 0 1px 3px #203b3526; transition: transform .15s; }
+.audio-voice-switch[aria-checked="true"] .audio-voice-switch-thumb { transform: translateX(36px); }
+.audio-voice-error { margin: 10px 0 0; color: #b26751; font-size: 12px; line-height: 1.4; }
 .command-layout--live .attention-header { flex-shrink: 0; min-height: 52px; padding: 12px 20px; }
 .command-layout--live .attention-header h2 { font-size: 18px; }
 .command-layout--live .open-count { font-size: 13px; padding: 4px 10px; }
