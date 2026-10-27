@@ -2,21 +2,25 @@
 
 import DemoVideoTile from "./DemoVideoTile";
 import { DEMO_SCENARIOS } from "@/lib/demoScenarios";
-import { residentDisplayName } from "@/lib/residentDisplay";
 import type { ResidentProfile } from "@/lib/types";
 
-// Row order: Robert / Eleanor, Daniel / Margaret. Keep video and patient IDs paired.
-const DISPLAY_ORDER = ["feed2", "feed1", "feed4", "feed3"];
+// Display labels only; keep the existing video order and monitoring identities.
+const DISPLAY_ORDER = [
+  { id: "feed2", name: "Eleanor Brooks" },
+  { id: "feed1", name: "Robert Hayes" },
+  { id: "feed4", name: "Margaret Chan" },
+  { id: "feed3", name: "Daniel Price" },
+];
 
 export default function MultiFeedDemo({ runningFeedIds, onToggleFeed, residents }: {
   runningFeedIds: string[];
   onToggleFeed: (id: string) => void;
   residents: ResidentProfile[];
 }) {
-  const feeds = DISPLAY_ORDER.flatMap(id => {
+  const feeds = DISPLAY_ORDER.flatMap(({ id, name }) => {
     const scenario = DEMO_SCENARIOS.find(feed => feed.id === id)!;
     const patient = residents.find(resident => resident.id === scenario.residentId && resident.active !== false);
-    return patient ? [{ ...scenario, resident: residentDisplayName(patient.id, patient.name), room: patient.room, risk: `${patient.fallRisk} risk` }] : [];
+    return patient ? [{ ...scenario, resident: name, room: patient.room, risk: `${patient.fallRisk} risk` }] : [];
   });
 
   return <div className="camera-grid">

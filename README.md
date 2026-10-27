@@ -12,7 +12,7 @@ If dependencies and local settings are already installed, start from the reposit
 npm run dev -- --port 3000
 ```
 
-Open http://127.0.0.1:3000. The root `dev`, `build`, and `start` commands forward to the app in `elderwatch-ai`.
+Open http://127.0.0.1:3000 for the Senserra landing page. Its “See Senserra in action,” “Explore the demo,” and “Explore Senserra” buttons open the monitoring application at `/app`. The application logo returns to the landing page. Landing page assets are in `elderwatch-ai/public/landing`; its video previews share the existing demo videos. The root `dev`, `build`, and `start` commands forward to the app in `elderwatch-ai`.
 
 For initial setup, run these commands from the repository root:
 

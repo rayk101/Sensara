@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import Link from "next/link";
 import PoseCamera from "@/components/PoseCamera";
 import { DEFAULT_SAFE_ZONE, clampSafeZone } from "@/lib/poseHelpers";
 import { usePoseDetection } from "@/hooks/usePoseDetection";
@@ -93,14 +92,14 @@ export default function Dashboard() {
   return <div className="command-app">
     <header className="command-header">
       <div className="command-shell command-header-inner">
-        <Link href="/" className="command-brand" aria-label="Sensara home">
+        <a href="/" className="command-brand" aria-label="Sensara home">
           <svg viewBox="0 0 48 52" fill="none" aria-hidden="true">
             <path d="M4 47V26C4 13.8 12.9 4 24 4s20 9.8 20 22v21" stroke="#304f5c" strokeWidth="5" strokeLinecap="round" />
             <path d="M15 47V33c0-6 3.8-10 9-10s9 4 9 10v14" stroke="#59a69e" strokeWidth="5" strokeLinecap="round" />
             <circle cx="24" cy="16" r="4" fill="#ec896e" />
           </svg>
           <span>Senserra</span>
-        </Link>
+        </a>
         <nav className="command-nav" aria-label="Main navigation">
           {TABS.map(tab => <button key={tab.id} aria-current={mainTab === tab.id ? "page" : undefined}
             className={mainTab === tab.id ? "active" : ""} onClick={() => changeTab(tab.id)}>{tab.label}</button>)}

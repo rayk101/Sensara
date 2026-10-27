@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Senserra — A second set of eyes — A greater sense of care</title>
+  <meta name="description" content="Meet Senserra — AI-assisted monitoring for senior care, recorded demonstrations and sourced research">
+  <meta name="theme-color" content="#f9faf7"><link rel="icon" href="/landing/assets/brand.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/landing/style.css"><script src="/landing/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+  <header class="header"><div class="shell nav-inner">
+    <a href="#" class="brand" aria-label="Senserra home"><img src="/landing/assets/brand.svg" alt="" width="29" height="33"><span>Senserra</span></a>
+    <button class="menu-button" aria-label="Open navigation" aria-expanded="false" aria-controls="navigation">Menu <span>☰</span></button>
+    <nav id="navigation" aria-label="Main navigation"><a href="#platform">Platform</a><a href="#why">Why it matters</a><a href="#demo">Demo</a></nav>
+    <a href="/app" class="button nav-cta">Explore the demo <span>↗</span></a>
+  </div></header>
+  <main id="main">
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title">A second set<br>of eyes <br><em>A greater <br>sense of care</em></h1>
+        <p class="hero-description">AI-assisted awareness for the spaces between check-ins</p>
+        <div class="hero-actions"><a href="/app" class="button">See Senserra in action <span>↗</span></a><a href="#platform" class="text-link">Discover our approach <span>↓</span></a></div>
+        
+      </div>
+      <div class="hero-scene" aria-label="Animated panels showing recorded Senserra demonstration footage">
+        
+        
+        <div class="video-panel panel-main"><div class="panel-top"><span> Room 118 <small>· Daily movement</small></span><span class="recorded">RECORDED DEMO</span></div><div class="main-film"><video data-motion autoplay muted loop playsinline preload="auto" aria-label="Recorded demonstration of a person moving through a room"><source src="/demo-videos/stable-demo.mp4" type="video/mp4"></video></div></div>
+        <div class="video-panel panel-small"><video data-motion autoplay muted loop playsinline preload="metadata" aria-label="Recorded lounge demonstration"><source src="/demo-videos/choking-demo.mp4" type="video/mp4"></video></div>
+        <button id="motion-toggle" class="motion-toggle" aria-pressed="false"><span>Ⅱ</span> Pause motion</button>
+      </div>
+    </section>
+
+    <section class="platform section shell" id="platform" aria-labelledby="platform-title">
+      <div class="section-intro reveal">
+        <h2 id="platform-title">One platform for<br><em>more attentive care</em></h2>
+        <p>Room views, resident context, and thoughtful response in one place</p>
+      </div>
+      <div class="product-explorer reveal">
+        <div class="product-tabs" role="tablist" aria-label="Explore the platform" aria-orientation="vertical">
+          <button role="tab" aria-selected="true" aria-controls="product-command" id="tab-command" data-tab="command"><span class="tab-title">Every room in view <span aria-hidden="true">↗</span></span><span class="tab-description">Bring room feeds and the moments that need attention into a single view</span></button>
+          <button role="tab" aria-selected="false" aria-controls="product-camera" id="tab-camera" data-tab="camera" tabindex="-1"><span class="tab-title">Context for every person <span aria-hidden="true">↗</span></span><span class="tab-description">Keep mobility and care notes alongside the room view</span></button>
+          <button role="tab" aria-selected="false" aria-controls="product-response" id="tab-response" data-tab="response" tabindex="-1"><span class="tab-title">Urgent alerts by SMS <span aria-hidden="true">↗</span></span><span class="tab-description">Notify assigned providers and care staff when an urgent incident needs attention, with SMS enabled</span></button>
+        </div>
+        <div class="product-panel" id="product-command" role="tabpanel" aria-labelledby="tab-command">
+          <div class="dashboard-preview">
+            <div class="dashboard-top"><img src="/landing/assets/brand.svg" width="23" height="25" alt=""><span>Command Center</span><small>Recorded demo</small></div>
+            <div class="mini-feeds">
+              <div><video muted loop playsinline preload="metadata" aria-label="Room 118 recorded preview"><source src="/demo-videos/stable-demo.mp4" type="video/mp4"></video><span>Room 118</span></div>
+              <div><video muted loop playsinline preload="metadata" aria-label="Room 204 recorded preview"><source src="/demo-videos/fall-demo.mp4" type="video/mp4"></video><span>Room 204</span></div>
+              <div><video muted loop playsinline preload="metadata" aria-label="Lounge recorded preview"><source src="/demo-videos/choking-demo.mp4" type="video/mp4"></video><span>Lounge</span></div>
+              <div><video muted loop playsinline preload="metadata" aria-label="Room 312 recorded preview"><source src="/demo-videos/wandering-demo.mp4" type="video/mp4"></video><span>Room 312</span></div>
+            </div>
+            <button class="preview-play" id="preview-play" aria-pressed="false">Play room previews <span aria-hidden="true">▷</span></button>
+          </div>
+        </div>
+        <div class="product-panel" id="product-camera" role="tabpanel" aria-labelledby="tab-camera" hidden>
+          <div class="room-preview"><video controls muted playsinline preload="metadata" aria-label="Room 118 recorded demonstration"><source src="/demo-videos/stable-demo.mp4" type="video/mp4"></video><div class="resident-note"><strong>Robert Hayes</strong><p>Independent mobility</p><small>Fictional demo resident</small></div></div>
+        </div>
+        <div class="product-panel" id="product-response" role="tabpanel" aria-labelledby="tab-response" hidden>
+          <div class="response-preview sms-preview">
+            <div class="response-head"><span>Urgent response</span><small>Illustrative workflow</small></div>
+            <h3>Reach the right<br>care team</h3>
+            <div class="sms-message" aria-label="Illustrative SMS notification">
+              <div class="sms-message-head"><strong>Senserra</strong><span>SMS example</span></div>
+              <p>Urgent patient safety incident detected</p>
+              <p>Open the secure Senserra dashboard for details</p>
+            </div>
+            <div class="response-action"><span class="action-icon" aria-hidden="true">↗</span><div><strong>An urgent incident is flagged</strong><p>Senserra queues a notification for review</p></div></div>
+            <div class="response-action"><span class="action-icon" aria-hidden="true">↳</span><div><strong>Assigned staff are notified by SMS</strong><p>Sent to configured care team phone numbers</p></div></div>
+            <div class="response-action"><span class="action-icon" aria-hidden="true">✓</span><div><strong>Review, respond, and record</strong><p>The care team follows up in Senserra</p></div></div>
+            <small>Requires SMS setup and enabled urgent notifications</small>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="research section shell" id="why" aria-labelledby="research-title">
+      <div class="research-copy reveal">
+        <h2 id="research-title">Why another set<br>of eyes matters</h2>
+        <div class="research-tabs" role="tablist" aria-label="Explore the research">
+          <button id="research-falls" role="tab" aria-selected="true" aria-controls="research-panel" data-research="falls">Falls</button>
+          <button id="research-wandering" role="tab" aria-selected="false" aria-controls="research-panel" data-research="wandering" tabindex="-1">Wandering</button>
+          <button id="research-caregiving" role="tab" aria-selected="false" aria-controls="research-panel" data-research="caregiving" tabindex="-1">Caregiving</button>
+        </div>
+        <div id="research-panel" role="tabpanel" aria-labelledby="research-falls">
+          <strong class="research-number" id="research-number">1 in 4</strong>
+          <p class="research-fact" id="research-fact">US adults aged 65 and older report a fall each year</p>
+          <a class="source-link" id="research-source" href="https://www.cdc.gov/falls/data-research/" target="_blank" rel="noopener">CDC / Annual estimate ↗</a>
+        </div>
+      </div>
+      <div class="research-graphic reveal" role="img" aria-label="One of four people highlighted to represent one in four older adults reporting a fall each year" id="research-graphic">
+        <div class="people-graphic" aria-hidden="true" id="people-graphic"></div>
+        
+      </div>
+    </section>
+    <section class="demo section shell" id="demo" aria-labelledby="demo-title">
+      <div class="section-intro reveal"><h2 id="demo-title">See a moment<br><em>more clearly</em></h2><p>Explore the recorded scenarios behind Senserra</p></div>
+      <div class="demo-selector" aria-label="Select a demonstration">
+        <button data-video="stable" aria-pressed="true">Daily movement</button>
+        <button data-video="fall" aria-pressed="false">A possible fall</button>
+        <button data-video="choking" aria-pressed="false">A sign of distress</button>
+        <button data-video="wandering" aria-pressed="false">Moving out of view</button>
+      </div>
+      <div class="demo-player"><video id="demo-video" controls muted playsinline preload="metadata" aria-label="Selected Senserra demonstration"><source src="/demo-videos/stable-demo.mp4" type="video/mp4"></video></div>
+      <div class="demo-caption"><span id="demo-caption">Room 118 / Daily movement</span><span>Recorded demonstration</span></div>
+    </section>
+    <section id="questions" class="questions section shell">
+      <h2>Care starts<br><em>with clarity</em></h2>
+      <div class="faq">
+        <details><summary>What does Senserra do today?<span>+</span></summary><p>The prototype combines camera views, pose-based observations, resident profiles, and incident review</p><p>This local preview uses recorded scenarios and fictional residents</p></details>
+        <details><summary>Does it diagnose falls or choking?<span>+</span></summary><p>No — it surfaces possible concerns for human review</p><p>A gesture cannot confirm choking and clinical reliability has not been established</p></details>
+        <details><summary>Who receives urgent SMS alerts?<span>+</span></summary><p>Healthcare providers and care staff receive alerts when they are assigned to the resident, active, and configured for urgent SMS notifications</p><p>The default message asks staff to open the secure dashboard for details, where they can review, acknowledge, and document their response</p></details>
+        <details><summary>How is video handled?<span>+</span></summary><p>Pose processing runs in the browser</p><p>Configured services can receive landmark evidence, store incident clips, and send notifications</p></details>
+        <details><summary>Where does the research come from?<span>+</span></summary><p>CDC and Alzheimer’s Association figures describe population-level risk and caregiver experience, not Senserra results</p><p>Sources were checked October 27, 2026 and are linked beside each figure</p></details>
+      </div>
+    </section>
+    <section class="closing section shell reveal"><h2>Someone looking out<br><em>More room to care</em></h2><a href="/app" class="button">Explore Senserra <span>↗</span></a></section>
+  </main>
+  <footer class="shell"><a href="#" class="brand"><img src="/landing/assets/brand.svg" alt="" width="29" height="33"><span>Senserra</span></a><div class="footer-links"><a href="#platform">Platform</a><a href="#why">Research</a><a href="#questions">Questions</a><a href="https://github.com/rayk101/Sensara" target="_blank" rel="noopener">Project ↗</a></div><small>© 2026 Senserra</small></footer>
+</body></html>

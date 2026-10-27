@@ -383,7 +383,7 @@ export default function PoseCamera({
         onPointerUp={editMode ? handlePointerUp : undefined} onPointerLeave={editMode ? handlePointerUp : undefined} />
       <div className="live-camera-status">
         <span className={`feed-badge feed-badge--${available ? severity : "unknown"}`} role="status">{label}</span>
-        <span className="live-source">{status === "running" ? "LIVE" : status === "idle" ? "PAUSED" : "CONNECTING"}</span>
+        <span className="live-source">{status === "running" ? "LIVE" : status === "idle" ? "PAUSED" : cameraUnavailable ? "OFFLINE" : "CONNECTING"}</span>
       </div>
       {(status === "idle" || cameraUnavailable) && <div className="live-camera-placeholder">
         <svg viewBox="0 0 32 28" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="2" y="5" width="20" height="18" rx="3" /><path d="m22 11 9-5v16l-9-5" strokeLinejoin="round" /></svg>
